@@ -20,18 +20,23 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/mikhail5545/media-service-go/internal/clients/mux"
+	"github.com/mikhail5545/media-service-go/internal/clients/productservice"
 	"github.com/mikhail5545/media-service-go/internal/database"
 	"github.com/mikhail5545/media-service-go/internal/models"
+	coursepb "github.com/mikhail5545/proto-go/proto/course/v0"
+	"google.golang.org/protobuf/types/known/fieldmaskpb"
 	"gorm.io/gorm"
 )
 
 type MuxService struct {
-	muxRepo   database.MUXRepository
-	muxClient mux.MUX
+	muxRepo       database.MUXRepository
+	muxClient     mux.MUX
+	courseService productservice.CourseServiceClient
 }
 
 type MUXServiceError struct {
@@ -52,10 +57,15 @@ func (e *MUXServiceError) GetCode() int {
 	return e.Code
 }
 
-func NewMuxService(muxRepo database.MUXRepository, muxClient mux.MUX) *MuxService {
+func NewMuxService(
+	muxRepo database.MUXRepository,
+	muxClient mux.MUX,
+	courseService productservice.CourseServiceClient,
+) *MuxService {
 	return &MuxService{
-		muxRepo:   muxRepo,
-		muxClient: muxClient,
+		muxRepo:       muxRepo,
+		muxClient:     muxClient,
+		courseService: courseService,
 	}
 }
 
@@ -73,6 +83,68 @@ func (s *MuxService) GetMuxUpload(ctx context.Context, id string) (*models.MUXUp
 	}
 
 	return upload, nil
+}
+
+func (s *MuxService) CreateMuxUpload(ctx context.Context, uploadID string, status string, partID string) (*models.MUXUpload, error) {
+	var muxVideo models.MUXUpload
+	err := s.muxRepo.DB().Transaction(func(tx *gorm.DB) error {
+		txMuxRepo := s.muxRepo.WithTx(tx)
+
+		getResponse, err := s.courseService.GetCoursePart(ctx, &coursepb.GetCoursePartRequest{
+			Id: partID,
+		})
+		if err != nil {
+			return &MUXServiceError{
+				Msg:  "Failed to get course part from course service",
+				Err:  err,
+				Code: http.StatusServiceUnavailable,
+			}
+		}
+
+		if getResponse.CoursePart.MuxVideo != nil {
+			return &MUXServiceError{
+				Msg:  "MUXVideo instance already exists for this part",
+				Err:  fmt.Errorf("MUXVideo instance already exists for this part"),
+				Code: http.StatusBadRequest,
+			}
+		}
+
+		muxVideo = models.MUXUpload{
+			ID:                    uuid.New().String(),
+			MUXUploadID:           &uploadID,
+			VideoProcessingStatus: status,
+		}
+
+		updateReq := coursepb.UpdateCoursePartRequest{
+			MuxVideoId: &muxVideo.ID,
+			UpdateMask: &fieldmaskpb.FieldMask{
+				Paths: []string{"mux_video_id"},
+			},
+		}
+
+		_, err = s.courseService.UpdateCoursePart(ctx, &updateReq)
+		if err != nil {
+			return &MUXServiceError{
+				Msg:  "Failed to get course part via course service",
+				Err:  err,
+				Code: http.StatusServiceUnavailable,
+			}
+		}
+
+		if err := txMuxRepo.Create(ctx, &muxVideo); err != nil {
+			return &MUXServiceError{
+				Msg:  "Failed to create mux video",
+				Err:  err,
+				Code: http.StatusInternalServerError,
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &muxVideo, nil
 }
 
 func (s *MuxService) DeleteMuxUpload(ctx context.Context, id string) error {

@@ -27,9 +27,12 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/mikhail5545/media-service-go/internal/clients/mux"
+	"github.com/mikhail5545/media-service-go/internal/clients/productservice"
 	"github.com/mikhail5545/media-service-go/internal/database"
 	"github.com/mikhail5545/media-service-go/internal/routers"
+	"github.com/mikhail5545/media-service-go/internal/servers"
 	"github.com/mikhail5545/media-service-go/internal/services"
+	muxpb "github.com/mikhail5545/proto-go/proto/mux_upload/v0"
 	"google.golang.org/grpc"
 )
 
@@ -49,6 +52,8 @@ func main() {
 	DBPassword := os.Getenv("POSTGRES_PASSWORD")
 	DBName := os.Getenv("POSTGRES_DB")
 
+	courseServiceAddr := os.Getenv("COURSE_SERVICE_ADDR")
+
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", DBHost, DBPort, DBUser, DBPassword, DBName)
 
 	db, err := database.NewPostgresDB(context.Background(), dsn)
@@ -64,11 +69,13 @@ func main() {
 		log.Fatalf("Failed to create MUX client: %v", err)
 	}
 
+	courseService, err := productservice.NewCourseServiceClient(context.Background(), courseServiceAddr)
+
 	// Create instances of required repositories
 	muxRepo := database.NewMUXRepository(db)
 
 	// Create instances of required services
-	muxService := services.NewMuxService(muxRepo, muxClient)
+	muxService := services.NewMuxService(muxRepo, muxClient, *courseService)
 
 	// --- Start gRPC server ---
 	go func() {
@@ -98,6 +105,12 @@ func main() {
 
 func startGRPCServer(muxService *services.MuxService, lis *net.Listener) *grpc.Server {
 	grpcServer := grpc.NewServer()
+
+	// Create instances of required gRPC server implementations
+	muxServer := servers.NewMuxServer(muxService)
+
+	// Register gRPC services with the server
+	muxpb.RegisterMuxUploadServiceServer(grpcServer, muxServer)
 
 	return grpcServer
 }

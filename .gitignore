@@ -1,0 +1,107 @@
+/internal/config
+.env
+*.env
+*.exe
+*.exe~
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+*.dll
+*.pyd
+
+# Distribution / packaging
+.eggs/
+dist/
+build/
+develop-eggs/
+.installed.cfg
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+
+# IDE files
+.idea/
+*.iml
+*.suo
+*.csproj
+*.sln
+*.user
+*.userprefs
+*.VC.db
+*.code-workspace
+.vscode/
+
+# Virtual environment
+.venv/
+env/
+venv/
+.virtualenv/
+.env/
+
+# Package management
+.env
+Pipfile
+Pipfile.lock
+poetry.lock
+package-lock.json
+yarn.lock
+node_modules/
+
+# Go specific
+*.exe
+*.test
+*.out
+pkg/
+bin/
+
+# Configuration files (sensitive data)
+conf/app.conf
+/config
+config.go
+*.config
+*.env
+.env.*
+config.json
+*.conf
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.out
+*.swp
+*.swo
+*.pid
+temp/
+tmp/
+migrations/
+img/
+
+# OS generated files
+Thumbs.db
+*.DS_Store
+.DS_Store
+desktop.ini
+
+# Other common files
+*.orig
+*.patch
+*.diff
+npm-debug.log
+
+#uploads
+uploads/
+
