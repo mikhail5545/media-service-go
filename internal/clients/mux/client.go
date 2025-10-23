@@ -77,6 +77,7 @@ func (c *MUXClient) CreateCoursePartUploadURL(coursePartID string) (mux.UploadRe
 		return mux.UploadResponse{}, fmt.Errorf("failed to marshal metadata: %s", err.Error())
 	}
 
+	// TODO: Change playback policy to signed with additional authorization
 	car := mux.CreateAssetRequest{PlaybackPolicy: []mux.PlaybackPolicy{mux.PUBLIC}, Passthrough: string(passthrough)}
 	cur := mux.CreateUploadRequest{NewAssetSettings: car, Timeout: 3600, CorsOrigin: "*"}
 	u, err := c.client.DirectUploadsApi.CreateDirectUpload(cur)

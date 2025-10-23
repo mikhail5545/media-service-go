@@ -49,6 +49,8 @@ github.com/mikhail5545/proto-go v0.1.3 h1:eEsGkXmojc4L4QbKqijnpaStE70AaSCE0FqiBH
 github.com/mikhail5545/proto-go v0.1.3/go.mod h1:mHQQkN3kZgflcAfqLebWpaJ5dUAqZkoGFY1lihCN0H4=
 github.com/mikhail5545/proto-go v0.1.4 h1:ye9VasWVNif7ZU/SBzQd3YlCR/RND6gkWuHaWfh0YvQ=
 github.com/mikhail5545/proto-go v0.1.4/go.mod h1:mHQQkN3kZgflcAfqLebWpaJ5dUAqZkoGFY1lihCN0H4=
+github.com/mikhail5545/proto-go v0.1.5 h1:kfDM/3ymX8VwW1La5QpL0l/qJtFwG9FawcYfrRp07Bg=
+github.com/mikhail5545/proto-go v0.1.5/go.mod h1:mHQQkN3kZgflcAfqLebWpaJ5dUAqZkoGFY1lihCN0H4=
 github.com/muxinc/mux-go v1.1.1 h1:EFCT8hvv2sIcl7zUMoFYVSUMsjJjXs8CjhCNd+46a2I=
 github.com/muxinc/mux-go v1.1.1/go.mod h1:WbikcZUvuLazzfQv+454Nibb/VSEpTy1lsRCwdTQ+X0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

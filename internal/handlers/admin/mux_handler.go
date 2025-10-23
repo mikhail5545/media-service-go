@@ -15,32 +15,36 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package routers
+package admin
 
 import (
+	"net/http"
+
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-	"github.com/mikhail5545/media-service-go/internal/handlers"
-	adminhandlers "github.com/mikhail5545/media-service-go/internal/handlers/admin"
+	"github.com/mikhail5545/media-service-go/internal/models"
 	"github.com/mikhail5545/media-service-go/internal/services"
 )
 
-func SetupRouter(e *echo.Echo, muxService *services.MuxService) {
-	e.HTTPErrorHandler = handlers.HTTPErrorHandler
+type MUXHandler struct {
+	muxService *services.MuxService
+}
 
-	api := e.Group("/api")
-	ver := api.Group("/v0")
-
-	e.Use(middleware.Logger())
-	e.Use(middleware.Recover())
-
-	muxAdminHandler := adminhandlers.NewMUXHandler(muxService)
-
-	mux := ver.Group("/mux")
-	{
-		adminMux := mux.Group("/admin")
-		{
-			adminMux.POST("/get-upload-url", muxAdminHandler.GetCoursePartUploadURL)
-		}
+func NewMUXHandler(muxService *services.MuxService) *MUXHandler {
+	return &MUXHandler{
+		muxService: muxService,
 	}
+}
+
+func (h *MUXHandler) GetCoursePartUploadURL(c echo.Context) error {
+	var req models.GetCoursePartUploadURLRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request JSON payload."})
+	}
+
+	response, err := h.muxService.CreateCoursePartUploadURL(c.Request().Context(), req.PartID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, map[string]any{"upload_response": response})
 }

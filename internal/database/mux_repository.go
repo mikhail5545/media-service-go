@@ -31,6 +31,7 @@ type MUXRepository interface {
 
 	// Write operations
 	Create(ctx context.Context, muxUpload *models.MUXUpload) error
+	Update(ctx context.Context, muxUpload *models.MUXUpload) error
 	Delete(ctx context.Context, id string) error
 	DB() *gorm.DB
 	WithTx(tx *gorm.DB) MUXRepository
@@ -78,6 +79,10 @@ func (r *gormMUXRepository) FindAll(ctx context.Context) ([]*models.MUXUpload, e
 
 func (r *gormMUXRepository) Create(ctx context.Context, muxUpload *models.MUXUpload) error {
 	return r.db.WithContext(ctx).Create(muxUpload).Error
+}
+
+func (r *gormMUXRepository) Update(ctx context.Context, muxUpload *models.MUXUpload) error {
+	return r.db.WithContext(ctx).Save(muxUpload).Error
 }
 
 func (r *gormMUXRepository) Delete(ctx context.Context, id string) error {

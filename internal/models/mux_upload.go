@@ -57,3 +57,7 @@ type MUXVideo struct {
 	MaxHeight             int     `json:"max_height"`
 	MaxWidth              int     `json:"max_width"`
 }
+
+type GetCoursePartUploadURLRequest struct {
+	PartID string `json:"part_id"`
+}

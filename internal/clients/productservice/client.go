@@ -53,3 +53,7 @@ func (c *CourseServiceClient) GetCoursePart(ctx context.Context, req *coursepb.G
 func (c *CourseServiceClient) UpdateCoursePart(ctx context.Context, req *coursepb.UpdateCoursePartRequest) (*coursepb.UpdateCoursePartResponse, error) {
 	return c.client.UpdateCoursePart(ctx, req)
 }
+
+func (c *CourseServiceClient) AddMuxVideoToCoursePart(ctx context.Context, req *coursepb.AddMuxVideoToCoursePartRequest) (*coursepb.AddMuxVideoToCoursePartResponse, error) {
+	return c.client.AddMuxVideoToCoursePart(ctx, req)
+}
