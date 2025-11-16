@@ -20,27 +20,67 @@ package routers
 import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/mikhail5545/media-service-go/internal/handlers"
-	adminhandlers "github.com/mikhail5545/media-service-go/internal/handlers/admin"
-	"github.com/mikhail5545/media-service-go/internal/services"
+	admincloudinaryhandler "github.com/mikhail5545/media-service-go/internal/handlers/admin/cloudinary"
+	adminmuxhandler "github.com/mikhail5545/media-service-go/internal/handlers/admin/mux"
+	muxwebhookhandler "github.com/mikhail5545/media-service-go/internal/handlers/hooks/mux"
+	cloudinaryservice "github.com/mikhail5545/media-service-go/internal/services/cloudinary"
+	muxservice "github.com/mikhail5545/media-service-go/internal/services/mux"
 )
 
-func SetupRouter(e *echo.Echo, muxService *services.MuxService) {
-	e.HTTPErrorHandler = handlers.HTTPErrorHandler
-
+func SetupRouter(e *echo.Echo, muxService muxservice.Service, cldService cloudinaryservice.Service) {
 	api := e.Group("/api")
 	ver := api.Group("/v0")
 
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	muxAdminHandler := adminhandlers.NewMUXHandler(muxService)
+	// --- Admin handlers ---
+	muxAdminHandler := adminmuxhandler.New(muxService)
+	cldAdminHandler := admincloudinaryhandler.New(cldService)
 
-	mux := ver.Group("/mux")
+	// --- Webhook handlers ---
+	muxWebhookHandler := muxwebhookhandler.New(muxService)
+
+	admin := ver.Group("/admin")
 	{
-		adminMux := mux.Group("/admin")
+		adminMux := admin.Group("/mux")
 		{
-			adminMux.POST("/get-upload-url", muxAdminHandler.GetCoursePartUploadURL)
+			adminMux.POST("/upload-url", muxAdminHandler.CreateUploadURL)
+
+			assets := adminMux.Group("/assets")
+			{
+				assets.POST("/associate/:id", muxAdminHandler.Associate)
+				assets.POST("/deassociate/:id", muxAdminHandler.Deassociate)
+				assets.DELETE("/deassociate/:id", muxAdminHandler.DeassociateAndDelete)
+				assets.GET("", muxAdminHandler.List)
+				assets.GET("/unowned", muxAdminHandler.ListUnowned)
+				assets.GET("/deleted", muxAdminHandler.ListDeleted)
+				assets.GET("/:id", muxAdminHandler.Get)
+				assets.GET("/deleted/:id", muxAdminHandler.GetWithDeleted)
+				assets.DELETE("/:id", muxAdminHandler.Delete)
+				assets.DELETE("/permanent/:id", muxAdminHandler.DeletePermanent)
+				assets.POST("/restore/:id", muxAdminHandler.Restore)
+			}
+		}
+
+		adminCld := admin.Group("/cloudinary")
+		{
+			adminCld.POST("/upload-url", cldAdminHandler.CreateSignedUploadURL)
+
+			assets := adminCld.Group("/assets")
+			{
+				assets.DELETE("/:id", cldAdminHandler.Delete)
+				assets.DELETE("/permanent/:id", cldAdminHandler.DeletePermanent)
+				assets.POST("/restore/:id", cldAdminHandler.Restore)
+			}
+		}
+	}
+
+	webhooks := ver.Group("/webhooks")
+	{
+		mux := webhooks.Group("/mux")
+		{
+			mux.POST("", muxWebhookHandler.HandleWebhook)
 		}
 	}
 }

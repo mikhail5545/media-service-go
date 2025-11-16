@@ -22,23 +22,33 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	mux "github.com/muxinc/mux-go"
+	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
+	mux "github.com/muxinc/mux-go/v6"
 )
 
 type MUX interface {
-	// CreateCoursePartUploadURL creates url to interact with mux API for course part model
-	// https://www.mux.com/docs/guides/upload-files-directly
-	CreateCoursePartUploadURL(coursePartID string) (mux.UploadResponse, error)
-	DeleteMUXAsset(assetID string) error
+	// CreateUploadURL creates url for direct upload to the mux using mux API.
+	// It also sets metadata for the created asset using mux assset's Meta object and Passthrough string.
+	//
+	// See more about [mux direct uploads].
+	//
+	// [mux direct uploads]: https://www.mux.com/docs/guides/upload-files-directly
+	CreateUploadURL(creatorID, title string) (*mux.UploadResponse, error)
+	// UpdateMetadata updates mux asset `Meta` object and `Passthrough` string with provided values.
+	// All request values are required for update and previous values will be completely deleted.
+	UpdateMetadata(req *assetmodel.UpdateMetadataRequest) (*mux.AssetResponse, error)
+	// DeleteAsset completely deletes a mux asset. This action is irreversable.
+	DeleteAsset(assetID string) error
 }
 
-type MUXClient struct {
+type Client struct {
 	client *mux.APIClient
 }
 
-type metadata struct {
-	CoursePartID string `json:"course_part_id"`
+type passthroughStruct struct {
+	OwnerType string `json:"owner_type"`
 }
 
 func NewMUXClient() (MUX, error) {
@@ -59,43 +69,94 @@ func NewMUXClient() (MUX, error) {
 		),
 	)
 
-	return &MUXClient{
+	return &Client{
 		client: client,
 	}, nil
 }
 
-// CreateCoursePartUploadURL creates url to interact with mux API for course part model
-// https://www.mux.com/docs/guides/upload-files-directly
-func (c *MUXClient) CreateCoursePartUploadURL(coursePartID string) (mux.UploadResponse, error) {
+// CreateUploadURL creates url for direct upload to the mux using mux API.
+// It also sets metadata for the created asset using mux assset's Meta object and Passthrough string.
+//
+// See more about [mux direct uploads].
+//
+// [mux direct uploads]: https://www.mux.com/docs/guides/upload-files-directly
+func (c *Client) CreateUploadURL(creatorID, title string) (*mux.UploadResponse, error) {
 	if c.client == nil {
-		return mux.UploadResponse{}, fmt.Errorf("mux client is not initialized")
+		return nil, fmt.Errorf("mux client is not initialized")
+	}
+	if _, err := uuid.Parse(creatorID); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+	if title == "" {
+		return nil, fmt.Errorf("%w: title is required", ErrInvalidArgument)
 	}
 
-	m := metadata{CoursePartID: coursePartID}
-	passthrough, err := json.Marshal(m)
+	// Define structured metadata object
+	assetMeta := mux.AssetMetadata{
+		Title:     title,
+		CreatorId: creatorID,
+	}
+
+	createAssetReq := mux.CreateAssetRequest{
+		PlaybackPolicy: []mux.PlaybackPolicy{mux.PUBLIC},
+		Meta:           assetMeta,
+	}
+
+	createUploadReq := mux.CreateUploadRequest{
+		NewAssetSettings: createAssetReq,
+		CorsOrigin:       "*",
+		Timeout:          3600,
+	}
+
+	resp, err := c.client.DirectUploadsApi.CreateDirectUpload(createUploadReq)
 	if err != nil {
-		return mux.UploadResponse{}, fmt.Errorf("failed to marshal metadata: %s", err.Error())
+		return nil, fmt.Errorf("%w: failed to create upload url: %w", ErrAPI, err)
 	}
 
-	// TODO: Change playback policy to signed with additional authorization
-	car := mux.CreateAssetRequest{PlaybackPolicy: []mux.PlaybackPolicy{mux.PUBLIC}, Passthrough: string(passthrough)}
-	cur := mux.CreateUploadRequest{NewAssetSettings: car, Timeout: 3600, CorsOrigin: "*"}
-	u, err := c.client.DirectUploadsApi.CreateDirectUpload(cur)
-	if err != nil {
-		return mux.UploadResponse{}, fmt.Errorf("failed to create upload url for mux API: %s", err.Error())
-	}
-
-	return u, nil
+	return &resp, nil
 }
 
-func (c *MUXClient) DeleteMUXAsset(assetID string) error {
+// UpdateMetadata updates mux asset `Meta` object and `Passthrough` string with provided values.
+// All request values are required for update and previous values will be completely deleted.
+func (c *Client) UpdateMetadata(req *assetmodel.UpdateMetadataRequest) (*mux.AssetResponse, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+	}
+
+	p := passthroughStruct{OwnerType: req.OwnerType}
+	passthrough, err := json.Marshal(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal passthrough: %w", err)
+	}
+
+	meta := mux.AssetMetadata{
+		Title:      req.Title,
+		ExternalId: req.OwnerID,
+		CreatorId:  req.CreatorID,
+	}
+
+	updateReq := mux.UpdateAssetRequest{
+		Passthrough: string(passthrough),
+		Meta:        meta,
+	}
+
+	resp, err := c.client.AssetsApi.UpdateAsset(req.AssetID, updateReq)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to update asset metadata: %w", ErrAPI, err)
+	}
+
+	return &resp, err
+}
+
+// DeleteAsset completely deletes a mux asset. This action is irreversable.
+func (c *Client) DeleteAsset(assetID string) error {
 	if c.client == nil {
 		return fmt.Errorf("mux client is not initialized")
 	}
 
 	err := c.client.AssetsApi.DeleteAsset(assetID)
 	if err != nil {
-		return fmt.Errorf("failed to delete asset from mux API: %s", err.Error())
+		return fmt.Errorf("%w: failed to delete asset: %w", ErrAPI, err)
 	}
 
 	return nil

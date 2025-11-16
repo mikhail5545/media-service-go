@@ -15,29 +15,18 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package database
+/*
+Package mux provides service-layer business logic for mux asset model.
+*/
+package mux
 
-import (
-	"context"
+import "errors"
 
-	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetowner "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+var (
+	// ErrNotFound mux upload not found
+	ErrNotFound = errors.New("mux upload not found")
+	// ErrInvalidArgument invalid argument error
+	ErrInvalidArgument = errors.New("invalid argument")
+	// ErrOwnerHasAsset owner already has an asset
+	ErrOwnerHasAsset = errors.New("owner already has an asset")
 )
-
-func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	err = db.AutoMigrate(&asset.Asset{}, &assetowner.AssetOwner{})
-	if err != nil {
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
-		return nil, err
-	}
-
-	return db, nil
-}

@@ -1,0 +1,145 @@
+// github.com/mikhail5545/media-service-go
+// microservice for vitianmove project family
+// Copyright (C) 2025  Mikhail Kulik
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as published
+// by the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Affero General Public License for more details.
+
+// You should have received a copy of the GNU Affero General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+/*
+Package mux provides service-layer business logic for for mux asset model.
+*/
+package mux
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+
+	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
+	"gorm.io/gorm"
+)
+
+// HandleAssetCreatedWebhook processes an incoming Mux webhook with "video.asset.created" event type, finds the corresponding asset,
+// and updates it in a patch-like manner.
+func (s *service) HandleAssetCreatedWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error {
+	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.Repo.WithTx(tx)
+
+		var asset *assetmodel.Asset
+		var err error
+
+		if payload.Data.UploadID != "" {
+			asset, err = txRepo.GetByUploadID(ctx, payload.Data.UploadID)
+		} else {
+			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID)
+		}
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: asset not found for upload_id '%s' or asset_id '%s'", ErrNotFound, payload.Data.UploadID, payload.Data.ID)
+			}
+			return fmt.Errorf("failed to retrieve asset for webhook: %w", err)
+		}
+
+		updates := buildAssetUpdates(asset, &payload.Data)
+
+		if len(updates) == 0 {
+			return nil
+		}
+
+		if _, err := txRepo.Update(ctx, asset, updates); err != nil {
+			return fmt.Errorf("failed to update asset from webhook: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// HandleAssetReadyWebhook processes an incoming Mux webhook with "video.asset.ready" event type, finds the corresponding asset,
+// and updates it in a patch-like manner.
+func (s *service) HandleAssetReadyWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error {
+	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.Repo.WithTx(tx)
+
+		var asset *assetmodel.Asset
+		var err error
+
+		if payload.Data.UploadID != "" {
+			asset, err = txRepo.GetByUploadID(ctx, payload.Data.UploadID)
+		} else {
+			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID)
+		}
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: asset not found for upload_id '%s' or asset_id '%s'", ErrNotFound, payload.Data.UploadID, payload.Data.ID)
+			}
+			return fmt.Errorf("failed to retrieve asset for webhook: %w", err)
+		}
+
+		updates := buildAssetUpdates(asset, &payload.Data)
+
+		if len(updates) == 0 {
+			return nil
+		}
+
+		if _, err := txRepo.Update(ctx, asset, updates); err != nil {
+			return fmt.Errorf("failed to update asset from webhook: %w", err)
+		}
+
+		return nil
+	})
+}
+
+// buildAssetUpdates compares the existing asset with the webhook data and constructs a
+// map of fields that need to be updated. This implements the "patch-like" update.
+func buildAssetUpdates(asset *assetmodel.Asset, data *assetmodel.MuxWebhookData) map[string]any {
+	updates := make(map[string]any)
+
+	if data.Status != "" && (asset.Status == nil || *asset.Status != data.Status) {
+		updates["status"] = data.Status
+	}
+	if data.Progress.State != "" && asset.State != data.Progress.State {
+		updates["state"] = data.Progress.State
+	}
+
+	if data.ID != "" && (asset.MuxAssetID == nil || *asset.MuxAssetID != data.ID) {
+		updates["mux_asset_id"] = data.ID
+	}
+	if len(data.PlaybackIDs) > 0 && !reflect.DeepEqual(asset.PlaybackIDs, data.PlaybackIDs) {
+		updates["playback_ids"] = data.PlaybackIDs
+	}
+	if len(data.Tracks) > 0 && !reflect.DeepEqual(asset.Tracks, data.Tracks) {
+		updates["tracks"] = data.Tracks
+	}
+
+	if data.Duration > 0 && (asset.Duration == nil || *asset.Duration != data.Duration) {
+		updates["duration"] = data.Duration
+	}
+	if data.AspectRatio != "" && (asset.AspectRatio == nil || *asset.AspectRatio != data.AspectRatio) {
+		updates["aspect_ratio"] = data.AspectRatio
+	}
+	if data.IngestType != "" && (asset.IngestType == nil || *asset.IngestType != data.IngestType) {
+		updates["ingest_type"] = data.IngestType
+	}
+	if !data.CreatedAt.IsZero() && (asset.AssetCreatedAt == nil || !asset.AssetCreatedAt.Equal(data.CreatedAt)) {
+		updates["asset_created_at"] = data.CreatedAt
+	}
+
+	if data.ResolutionTier != "" && (asset.ResolutionTier == nil || *asset.ResolutionTier != data.ResolutionTier) {
+		updates["resolution_tier"] = data.ResolutionTier
+	}
+
+	return updates
+}

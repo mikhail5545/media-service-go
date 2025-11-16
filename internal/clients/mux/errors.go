@@ -1,4 +1,4 @@
-// github.com/mikhail5545/media-service-go
+// github.com/mikhail5545/product-service-go
 // microservice for vitianmove project family
 // Copyright (C) 2025  Mikhail Kulik
 
@@ -15,29 +15,13 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package database
+package mux
 
-import (
-	"context"
+import "errors"
 
-	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetowner "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+var (
+	// ErrInvalidArgument is returned when the request payload is invalid.
+	ErrInvalidArgument = errors.New("invalid argument")
+	// ErrAPI is returned for errors from the Mux API.
+	ErrAPI = errors.New("mux api error")
 )
-
-func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	err = db.AutoMigrate(&asset.Asset{}, &assetowner.AssetOwner{})
-	if err != nil {
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
-		return nil, err
-	}
-
-	return db, nil
-}

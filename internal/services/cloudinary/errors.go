@@ -15,29 +15,16 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package database
+/*
+Package cloudinary provides service-layer logic for Cloudinary asset management and asset models.
+*/
+package cloudinary
 
-import (
-	"context"
+import "errors"
 
-	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetowner "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+var (
+	ErrExternalService  = errors.New("external service error")
+	ErrNotFound         = errors.New("asset or it's owner not found")
+	ErrInvalidArgument  = errors.New("invalid argument")
+	ErrInvalidSignature = errors.New("invalid request signature")
 )
-
-func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	err = db.AutoMigrate(&asset.Asset{}, &assetowner.AssetOwner{})
-	if err != nil {
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
-		return nil, err
-	}
-
-	return db, nil
-}

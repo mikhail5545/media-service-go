@@ -15,29 +15,12 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-package database
+package assetowner
 
-import (
-	"context"
-
-	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetowner "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-)
-
-func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		return nil, err
-	}
-
-	err = db.AutoMigrate(&asset.Asset{}, &assetowner.AssetOwner{})
-	if err != nil {
-		sqlDB, _ := db.DB()
-		sqlDB.Close()
-		return nil, err
-	}
-
-	return db, nil
+// AssetOwner represents the join table for the many-to-many relationship
+// between assets and their owners (e.g., products, articles).
+type AssetOwner struct {
+	AssetID   string `gorm:"primaryKey;size:36" json:"asset_id"`
+	OwnerID   string `gorm:"primaryKey;size:36" json:"owner_id"`
+	OwnerType string `gorm:"primaryKey;varchar(128)" json:"owner_type"`
 }

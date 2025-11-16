@@ -19,98 +19,11 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"net"
-	"os"
 
-	"github.com/joho/godotenv"
-	"github.com/labstack/echo/v4"
-	"github.com/mikhail5545/media-service-go/internal/clients/mux"
-	"github.com/mikhail5545/media-service-go/internal/clients/productservice"
-	"github.com/mikhail5545/media-service-go/internal/database"
-	"github.com/mikhail5545/media-service-go/internal/routers"
-	"github.com/mikhail5545/media-service-go/internal/servers"
-	"github.com/mikhail5545/media-service-go/internal/services"
-	muxpb "github.com/mikhail5545/proto-go/proto/mux_upload/v0"
-	"google.golang.org/grpc"
+	"github.com/mikhail5545/media-service-go/internal/app"
 )
 
 func main() {
-	const grpcPort = 50053
-	const httpPort = 8083
-	grpcListenAddr := fmt.Sprintf(":%d", grpcPort)
-
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
-	DBHost := os.Getenv("POSTGRES_HOST")
-	DBPort := os.Getenv("POSTGRES_PORT")
-	DBUser := os.Getenv("POSTGRES_USER")
-	DBPassword := os.Getenv("POSTGRES_PASSWORD")
-	DBName := os.Getenv("POSTGRES_DB")
-
-	courseServiceAddr := os.Getenv("COURSE_SERVICE_ADDR")
-
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", DBHost, DBPort, DBUser, DBPassword, DBName)
-
-	db, err := database.NewPostgresDB(context.Background(), dsn)
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
-	}
-
-	log.Println("Database connection established.")
-
-	// Create instances of required clients
-	muxClient, err := mux.NewMUXClient()
-	if err != nil {
-		log.Fatalf("Failed to create MUX client: %v", err)
-	}
-
-	courseService, err := productservice.NewCourseServiceClient(context.Background(), courseServiceAddr)
-
-	// Create instances of required repositories
-	muxRepo := database.NewMUXRepository(db)
-
-	// Create instances of required services
-	muxService := services.NewMuxService(muxRepo, muxClient, *courseService)
-
-	// --- Start gRPC server ---
-	go func() {
-		lis, err := net.Listen("tcp", grpcListenAddr)
-		if err != nil {
-			log.Fatalf("Failed to listen: %v", err)
-		}
-
-		grpcServer := startGRPCServer(muxService, &lis)
-		log.Printf("gRPC server listening on %s", grpcListenAddr)
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve gRPC server: %v", err)
-		}
-	}()
-
-	// --- Start HTTP server ---
-	e := echo.New()
-
-	// Setup router
-	routers.SetupRouter(e, muxService)
-
-	httpListenAddr := fmt.Sprintf(":%d", httpPort)
-	if err := e.Start(httpListenAddr); err != nil {
-		log.Fatalf("Failed to start HTTP server: %v", err)
-	}
-}
-
-func startGRPCServer(muxService *services.MuxService, lis *net.Listener) *grpc.Server {
-	grpcServer := grpc.NewServer()
-
-	// Create instances of required gRPC server implementations
-	muxServer := servers.NewMuxServer(muxService)
-
-	// Register gRPC services with the server
-	muxpb.RegisterMuxUploadServiceServer(grpcServer, muxServer)
-
-	return grpcServer
+	ctx := context.Background()
+	app.Startup(ctx)
 }
