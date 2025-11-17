@@ -32,7 +32,6 @@ import (
 	"github.com/mikhail5545/media-service-go/internal/clients/cloudinary"
 	metarepo "github.com/mikhail5545/media-service-go/internal/database/arango/cloudinary/metadata"
 	assetrepo "github.com/mikhail5545/media-service-go/internal/database/cloudinary/asset"
-	assetownerrepo "github.com/mikhail5545/media-service-go/internal/database/cloudinary/asset_owner"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
 	metamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
 	imageclient "github.com/mikhail5545/product-service-go/pkg/client/image"
@@ -130,26 +129,27 @@ type Service interface {
 	// Returns an error if the ID is not a valid UUID (ErrInvalidArgument), asset not found (ErrNotFound)
 	// or detabase/internal error occurs.
 	Restore(ctx context.Context, assetID string) error
+	// HandleUploadWebhook processes an incoming Cloudinary upload webhook, finds the corresponding asset,
+	// and updates it in a patch-like manner.
+	HandleUploadWebhook(ctx context.Context, payload []byte, recievedTimestamp, recievedSignature string) error
 }
 
 // Service provides service-layer logic for Cloudinary asset management and asset models.
 // It holds an instance of cloudinary API client to perform external API operations and
-// instances of [assetrepo.Repository] and [assetownerrepo.Repository] to perform database operations.
+// instances of [assetrepo.Repository] to perform database operations.
 type service struct {
 	Client         cloudinary.Cloudinary
 	Repo           assetrepo.Repository
 	metaRepo       metarepo.Repository
-	AssetOwnerRepo assetownerrepo.Repository
 	ImageSvcClient imageclient.Client
 }
 
 // New creates a new Service instance using provided cloudinary API client, asset and asset owner repositories.
-func New(cnt cloudinary.Cloudinary, repo assetrepo.Repository, assetOwnerRepo assetownerrepo.Repository, mr metarepo.Repository) Service {
+func New(cnt cloudinary.Cloudinary, repo assetrepo.Repository, mr metarepo.Repository) Service {
 	return &service{
-		Client:         cnt,
-		Repo:           repo,
-		metaRepo:       mr,
-		AssetOwnerRepo: assetOwnerRepo,
+		Client:   cnt,
+		Repo:     repo,
+		metaRepo: mr,
 	}
 }
 
@@ -655,6 +655,7 @@ func (s *service) SuccessfulUpload(ctx context.Context, req *assetmodel.Successf
 		return nil, fmt.Errorf("failed to create asset record: %w", err)
 	}
 
+	// Asset may be created without owners initially.
 	if len(req.Owners) > 0 {
 		if err := s.metaRepo.UpdateOwners(ctx, newAsset.ID, req.Owners); err != nil {
 			return nil, fmt.Errorf("failed to create asset owners metadata: %w", err)
