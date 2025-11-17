@@ -64,7 +64,6 @@ node_modules/
 *.exe
 *.test
 *.out
-pkg/
 bin/
 
 # Configuration files (sensitive data)
