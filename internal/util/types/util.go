@@ -19,87 +19,144 @@
 package types
 
 import (
-	"time"
-
-	muxpb "github.com/mikhail5545/proto-go/proto/media_service/mux/asset/v0"
-	"google.golang.org/protobuf/types/known/fieldmaskpb"
+	cldassetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
+	cldmetamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
+	muxassetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
+	cldassetpb "github.com/mikhail5545/proto-go/proto/media_service/cloudinary/asset/v0"
+	muxassetpb "github.com/mikhail5545/proto-go/proto/media_service/mux/asset/v0"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func ConvertToMuxProtoBuf(muxUpload *mux.Upload) *muxpb.MuxUpload {
-	muxUploadpb := &muxpb.MuxUpload{
-		Id:                    muxUpload.ID,
-		CreatedAt:             timestamppb.New(muxUpload.CreatedAt),
-		UpdatedAt:             timestamppb.New(muxUpload.UpdatedAt),
-		MuxUploadId:           muxUpload.MUXUploadID,
-		MuxAssetId:            muxUpload.MUXAssetID,
-		MuxPlaybackId:         muxUpload.MUXPlaybackID,
-		VideoProcessingStatus: muxUpload.VideoProcessingStatus,
-		AspectRatio:           muxUpload.AspectRatio,
-		AssetCreatedAt:        timestamppb.New(*muxUpload.AssetCreatedAt),
-	}
-	if muxUpload.Width != nil {
-		mw32 := int32(*muxUpload.Width)
-		muxUploadpb.Width = &mw32
-	}
-	if muxUpload.Height != nil {
-		mh32 := int32(*muxUpload.Height)
-		muxUploadpb.Height = &mh32
+func MuxAssetResponseToProtofuf(response *muxassetmodel.AssetResponse) *muxassetpb.AssetResponse {
+	pbResponse := &muxassetpb.AssetResponse{
+		Asset: &muxassetpb.Asset{
+			Id:             response.Asset.ID,
+			CreatedAt:      timestamppb.New(response.CreatedAt),
+			UpdatedAt:      timestamppb.New(response.UpdatedAt),
+			MuxUploadId:    response.MuxUploadID,
+			MuxAssetId:     response.MuxAssetID,
+			State:          response.State,
+			Status:         response.Status,
+			AspectRatio:    response.AspectRatio,
+			ResolutionTier: response.ResolutionTier,
+			IngestType:     response.IngestType,
+		},
+		Title:     response.Title,
+		CreatorId: response.CreatorID,
 	}
 
-	return muxUploadpb
+	if response.DeletedAt.Valid {
+		pbResponse.Asset.DeletedAt = timestamppb.New(response.DeletedAt.Time)
+	}
+	if response.Asset.Duration != nil {
+		d := float32(*response.Duration)
+		pbResponse.Asset.Duration = &d
+	}
+	if response.AssetCreatedAt != nil {
+		pbResponse.Asset.AssetCreatedAt = timestamppb.New(*response.AssetCreatedAt)
+	}
+
+	for _, track := range response.Tracks {
+		pbResponse.Tracks = append(pbResponse.Tracks, MuxTrackToProtobuf(&track))
+	}
+	for _, owner := range response.Owners {
+		pbResponse.Owners = append(pbResponse.Owners, &muxassetpb.Owner{OwnerId: owner.OwnerID, OwnerType: owner.OwnerType})
+	}
+	for _, playbackID := range response.MuxPlaybackIDs {
+		pbResponse.Asset.MuxPlaybackIds = append(pbResponse.Asset.MuxPlaybackIds, &muxassetpb.MuxPlaybackID{Id: playbackID.ID, Policy: playbackID.Policy, DrmConfigurationId: *playbackID.DrmConfigurationID})
+	}
+
+	return pbResponse
 }
 
-func MuxUploadToProtobufUpdate(resp *muxpb.UpdateResponse, updates map[string]any) *muxpb.UpdateResponse {
-	resp.Updated = &fieldmaskpb.FieldMask{}
-	for k, v := range updates {
-		switch k {
-		case "mux_upload_id":
-			if val, ok := v.(string); ok {
-				resp.MuxUploadId = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.mux_upload_id")
-			}
-		case "mux_asset_id":
-			if val, ok := v.(string); ok {
-				resp.MuxAssetId = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.mux_asset_id")
-			}
-		case "mux_playback_id":
-			if val, ok := v.(string); ok {
-				resp.MuxPlaybackId = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.mux_playback_id")
-			}
-		case "video_processing_status":
-			if val, ok := v.(string); ok {
-				resp.VideoProcessingStatus = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.video_processing_status")
-			}
-		case "duration":
-			if val, ok := v.(float32); ok {
-				resp.Duration = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.duration")
-			}
-		case "aspect_ratio":
-			if val, ok := v.(string); ok {
-				resp.AspectRatio = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.aspect_ratio")
-			}
-		case "width":
-			if val, ok := v.(int32); ok {
-				resp.Width = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.width")
-			}
-		case "height":
-			if val, ok := v.(int32); ok {
-				resp.Height = &val
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.height")
-			}
-		case "asset_created_at":
-			if val, ok := v.(time.Time); ok {
-				resp.AssetCreatedAt = timestamppb.New(val)
-				resp.Updated.Paths = append(resp.Updated.Paths, "updateresponse.asset_created_at")
-			}
-		}
+func MuxTrackToProtobuf(track *muxassetmodel.MuxWebhookTrack) *muxassetpb.MuxTrack {
+	pbTrack := &muxassetpb.MuxTrack{
+		Id:             track.ID,
+		Type:           track.Type,
+		MaxWidth:       track.MaxWidth,
+		MaxHeight:      track.MaxHeight,
+		MaxChannels:    track.MaxChannels,
+		TextType:       track.TextType,
+		TextSource:     track.TextSource,
+		LanguageCode:   track.LanguageCode,
+		Name:           track.Name,
+		ClosedCaptions: track.ClosedCaptions,
+		Passthrough:    track.Passthrough,
+		Status:         track.Status,
+		Primary:        track.Primary,
+		Errors: &muxassetpb.MuxError{
+			Type:     track.Errors.Type,
+			Messages: track.Errors.Messages,
+		},
 	}
-	return resp
+	if track.Duration != nil {
+		d := float32(*track.Duration)
+		pbTrack.Duration = &d
+	}
+	if track.MaxFrameRate != nil {
+		d := float32(*track.MaxFrameRate)
+		pbTrack.MaxFrameRate = &d
+	}
+	return pbTrack
+}
+
+func CldAssetResponseToProtobuf(response *cldassetmodel.AssetResponse) *cldassetpb.AssetResponse {
+	pbResponse := &cldassetpb.AssetResponse{
+		Asset: &cldassetpb.Asset{
+			Id:                 response.ID,
+			CreatedAt:          timestamppb.New(response.CreatedAt),
+			UpdatedAt:          timestamppb.New(response.UpdatedAt),
+			CloudinaryAssetId:  response.CloudinaryAssetID,
+			CloudinaryPublicId: response.CloudinaryPublicID,
+			Url:                response.URL,
+			SecureUrl:          response.SecureURL,
+			ResourceType:       response.ResourceType,
+			Format:             response.Format,
+			Tags:               response.Tags,
+			AssetFolder:        response.AssetFolder,
+			DisplayName:        response.DisplayName,
+		},
+	}
+	if response.Width != nil {
+		w := int32(*response.Width)
+		pbResponse.Asset.Width = &w
+	}
+	if response.Height != nil {
+		h := int32(*response.Height)
+		pbResponse.Asset.Height = &h
+	}
+	if response.DeletedAt.Valid {
+		pbResponse.Asset.DeletedAt = timestamppb.New(response.DeletedAt.Time)
+	}
+
+	for _, owner := range response.Owners {
+		pbResponse.Owners = append(pbResponse.Owners, &cldassetpb.Owner{OwnerId: owner.OwnerID, OwnerType: owner.OwnerType})
+	}
+	return pbResponse
+}
+
+func SuccessRequestFromProtobuf(pbReq *cldassetpb.SuccessfulUploadRequest) *cldassetmodel.SuccessfulUploadRequest {
+	req := &cldassetmodel.SuccessfulUploadRequest{
+		CloudinaryAssetID:  pbReq.GetCloudinaryAssetId(),
+		CloudinaryPublicID: pbReq.GetCloudinaryPublicId(),
+		ResourceType:       pbReq.GetResourceType(),
+		Format:             pbReq.GetFormat(),
+		URL:                pbReq.GetUrl(),
+		SecureURL:          pbReq.GetSecureUrl(),
+		AssetFolder:        pbReq.GetAssetFolder(),
+		DisplayName:        pbReq.GetDisplayName(),
+	}
+	for _, owner := range pbReq.GetOwners() {
+		req.Owners = append(req.Owners, cldmetamodel.Owner{OwnerID: owner.GetOwnerId(), OwnerType: owner.GetOwnerType()})
+	}
+
+	if pbReq.Width != nil {
+		w := int(*pbReq.Width)
+		req.Width = &w
+	}
+	if pbReq.Height != nil {
+		h := int(*pbReq.Height)
+		req.Height = &h
+	}
+	return req
 }

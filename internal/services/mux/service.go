@@ -29,6 +29,7 @@ import (
 	"github.com/mikhail5545/media-service-go/internal/clients/mux"
 	metarepo "github.com/mikhail5545/media-service-go/internal/database/arango/mux/metadata"
 	assetrepo "github.com/mikhail5545/media-service-go/internal/database/mux/asset"
+	detailrepo "github.com/mikhail5545/media-service-go/internal/database/mux/detail"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
 	metamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
 	videoservice "github.com/mikhail5545/product-service-go/pkg/client/video"
@@ -92,14 +93,13 @@ type Service interface {
 	// or a database/internal error occurs.
 	Restore(ctx context.Context, id string) error
 	// CreateUploadURL creates upload URL for the direct upload using mux direct upload api.
-	// It uses [muxclient.Client.CreateUploadURL] method to access MUX direct upload API.
-	// If owner already has an association with the asset, both owner and asset will be deassociated and the new asset instance will be created.
+	// It uses [mux.Client.CreateUploadURL] method to access MUX direct upload API.
+	// If an owner already has an association with an asset, an error is returned.
 	//
-	// Returns an error if the partID is not a valid UUID (ErrInvalidArgument), the record is not found (ErrNotFound),
-	// MUX API client error (http.StatusServiceUnavailable), any database/internal error (http.StatusInternalServerError) or gRPC
-	// course part client error (handled by handleGRPCError).
+	// Returns a muxgo.UploadResponse struct on success.
+	// Returns an error if the request payload is invalid (ErrInvalidArgument), if the owner already has an asset (ErrOwnerHasAsset),
+	// or if a MUX API, database, or gRPC error occurs.
 	CreateUploadURL(ctx context.Context, req *assetmodel.CreateUploadURLRequest) (*muxgo.UploadResponse, error)
-	// Associate links an existing, unowned asset to an owner.
 	// CreateUnownedUploadURL creates an upload URL for a new asset without an initial owner.
 	//
 	// Returns a muxgo.UploadResponse struct on success.
@@ -142,6 +142,8 @@ type service struct {
 	Repo assetrepo.Repository
 	// metaRepo represents repository-layer logic for asset's metadata CRUD opearatations.
 	metaRepo metarepo.Repository
+	// detailRepo represents repository-layer logic for asset's details CRUD operations.
+	detailRepo detailrepo.Repository
 	// Client represents MUX API client for direct asset management.
 	Client         mux.MUX
 	VideoSvcClient videoservice.Service
@@ -151,12 +153,14 @@ type service struct {
 func New(
 	repo assetrepo.Repository,
 	mr metarepo.Repository,
+	dr detailrepo.Repository,
 	client mux.MUX,
 	vsc videoservice.Service,
 ) Service {
 	return &service{
 		Repo:           repo,
 		metaRepo:       mr,
+		detailRepo:     dr,
 		Client:         client,
 		VideoSvcClient: vsc,
 	}
@@ -184,7 +188,12 @@ func (s *service) Get(ctx context.Context, id string) (*assetmodel.AssetResponse
 		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
 	}
 
-	response := s.combineAssetAndMetadata(asset, metadata)
+	details, err := s.detailRepo.Get(ctx, id)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to retrieve asset details: %w", err)
+	}
+
+	response := s.combineAssetAndMetadata(asset, metadata, details)
 
 	return response, nil
 }
@@ -211,7 +220,12 @@ func (s *service) GetWithDeleted(ctx context.Context, id string) (*assetmodel.As
 		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
 	}
 
-	response := s.combineAssetAndMetadata(asset, metadata)
+	details, err := s.detailRepo.Get(ctx, id)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to retrieve asset details: %w", err)
+	}
+
+	response := s.combineAssetAndMetadata(asset, metadata, details)
 
 	return response, nil
 }
@@ -245,9 +259,14 @@ func (s *service) List(ctx context.Context, limit, offset int) ([]assetmodel.Ass
 		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
 	}
 
+	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to retrieve details for assets: %w", err)
+	}
+
 	responses := make([]assetmodel.AssetResponse, len(assets))
 	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
+		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
 	}
 
 	return responses, total, nil
@@ -282,9 +301,14 @@ func (s *service) ListUnowned(ctx context.Context, limit, offset int) ([]assetmo
 		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
 	}
 
+	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to retrieve details for unowned assets: %w", err)
+	}
+
 	responses := make([]assetmodel.AssetResponse, len(assets))
 	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
+		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
 	}
 
 	return responses, int64(len(unownedIDs)), nil
@@ -319,9 +343,14 @@ func (s *service) ListDeleted(ctx context.Context, limit, offset int) ([]assetmo
 		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
 	}
 
+	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to retrieve details for deleted assets: %w", err)
+	}
+
 	responses := make([]assetmodel.AssetResponse, len(assets))
 	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
+		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
 	}
 
 	return responses, total, nil

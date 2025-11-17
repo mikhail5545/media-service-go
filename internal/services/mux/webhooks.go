@@ -27,6 +27,7 @@ import (
 	"reflect"
 
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
+	detailmodel "github.com/mikhail5545/media-service-go/internal/models/mux/detail"
 	"gorm.io/gorm"
 )
 
@@ -35,14 +36,15 @@ import (
 func (s *service) HandleAssetCreatedWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error {
 	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.Repo.WithTx(tx)
+		txDetailRepo := s.detailRepo.WithTx(tx)
 
 		var asset *assetmodel.Asset
 		var err error
 
-		if payload.Data.UploadID != "" {
-			asset, err = txRepo.GetByUploadID(ctx, payload.Data.UploadID)
+		if payload.Data.UploadID != nil && *payload.Data.UploadID != "" {
+			asset, err = txRepo.GetByUploadID(ctx, *payload.Data.UploadID)
 		} else {
-			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID)
+			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID) // data.ID is required, so no pointer
 		}
 
 		if err != nil {
@@ -56,6 +58,14 @@ func (s *service) HandleAssetCreatedWebhook(ctx context.Context, payload *assetm
 
 		if len(updates) == 0 {
 			return nil
+		}
+
+		// Separately handle the bulky 'Tracks' data by upserting it.
+		if len(payload.Data.Tracks) > 0 {
+			details := detailmodel.AssetDetail{AssetID: asset.ID, Tracks: payload.Data.Tracks}
+			if err := txDetailRepo.Upsert(ctx, &details); err != nil {
+				return fmt.Errorf("failed to upsert asset details from webhook: %w", err)
+			}
 		}
 
 		if _, err := txRepo.Update(ctx, asset, updates); err != nil {
@@ -71,14 +81,15 @@ func (s *service) HandleAssetCreatedWebhook(ctx context.Context, payload *assetm
 func (s *service) HandleAssetReadyWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error {
 	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.Repo.WithTx(tx)
+		txDetailRepo := s.detailRepo.WithTx(tx)
 
 		var asset *assetmodel.Asset
 		var err error
 
-		if payload.Data.UploadID != "" {
-			asset, err = txRepo.GetByUploadID(ctx, payload.Data.UploadID)
+		if payload.Data.UploadID != nil && *payload.Data.UploadID != "" {
+			asset, err = txRepo.GetByUploadID(ctx, *payload.Data.UploadID)
 		} else {
-			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID)
+			asset, err = txRepo.GetByAssetID(ctx, payload.Data.ID) // data.ID is required, so no pointer
 		}
 
 		if err != nil {
@@ -94,6 +105,14 @@ func (s *service) HandleAssetReadyWebhook(ctx context.Context, payload *assetmod
 			return nil
 		}
 
+		// Separately handle the bulky 'Tracks' data by upserting it.
+		if len(payload.Data.Tracks) > 0 {
+			details := detailmodel.AssetDetail{AssetID: asset.ID, Tracks: payload.Data.Tracks}
+			if err := txDetailRepo.Upsert(ctx, &details); err != nil {
+				return fmt.Errorf("failed to upsert asset details from webhook: %w", err)
+			}
+		}
+
 		if _, err := txRepo.Update(ctx, asset, updates); err != nil {
 			return fmt.Errorf("failed to update asset from webhook: %w", err)
 		}
@@ -107,8 +126,8 @@ func (s *service) HandleAssetReadyWebhook(ctx context.Context, payload *assetmod
 func buildAssetUpdates(asset *assetmodel.Asset, data *assetmodel.MuxWebhookData) map[string]any {
 	updates := make(map[string]any)
 
-	if data.Status != "" && (asset.Status == nil || *asset.Status != data.Status) {
-		updates["status"] = data.Status
+	if data.Status != nil && (asset.Status == nil || *asset.Status != *data.Status) {
+		updates["status"] = *data.Status
 	}
 	if data.Progress.State != "" && asset.State != data.Progress.State {
 		updates["state"] = data.Progress.State
@@ -117,28 +136,25 @@ func buildAssetUpdates(asset *assetmodel.Asset, data *assetmodel.MuxWebhookData)
 	if data.ID != "" && (asset.MuxAssetID == nil || *asset.MuxAssetID != data.ID) {
 		updates["mux_asset_id"] = data.ID
 	}
-	if len(data.PlaybackIDs) > 0 && !reflect.DeepEqual(asset.PlaybackIDs, data.PlaybackIDs) {
+	if len(data.PlaybackIDs) > 0 && !reflect.DeepEqual(asset.MuxPlaybackIDs, data.PlaybackIDs) {
 		updates["playback_ids"] = data.PlaybackIDs
 	}
-	if len(data.Tracks) > 0 && !reflect.DeepEqual(asset.Tracks, data.Tracks) {
-		updates["tracks"] = data.Tracks
-	}
 
-	if data.Duration > 0 && (asset.Duration == nil || *asset.Duration != data.Duration) {
-		updates["duration"] = data.Duration
+	if data.Duration != nil && (asset.Duration == nil || *asset.Duration != *data.Duration) {
+		updates["duration"] = *data.Duration
 	}
-	if data.AspectRatio != "" && (asset.AspectRatio == nil || *asset.AspectRatio != data.AspectRatio) {
-		updates["aspect_ratio"] = data.AspectRatio
+	if data.AspectRatio != nil && (asset.AspectRatio == nil || *asset.AspectRatio != *data.AspectRatio) {
+		updates["aspect_ratio"] = *data.AspectRatio
 	}
-	if data.IngestType != "" && (asset.IngestType == nil || *asset.IngestType != data.IngestType) {
-		updates["ingest_type"] = data.IngestType
+	if data.IngestType != nil && (asset.IngestType == nil || *asset.IngestType != *data.IngestType) {
+		updates["ingest_type"] = *data.IngestType
 	}
 	if !data.CreatedAt.IsZero() && (asset.AssetCreatedAt == nil || !asset.AssetCreatedAt.Equal(data.CreatedAt)) {
 		updates["asset_created_at"] = data.CreatedAt
 	}
 
-	if data.ResolutionTier != "" && (asset.ResolutionTier == nil || *asset.ResolutionTier != data.ResolutionTier) {
-		updates["resolution_tier"] = data.ResolutionTier
+	if data.ResolutionTier != nil && (asset.ResolutionTier == nil || *asset.ResolutionTier != *data.ResolutionTier) {
+		updates["resolution_tier"] = *data.ResolutionTier
 	}
 
 	return updates

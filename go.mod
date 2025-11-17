@@ -12,7 +12,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.13.4
 	github.com/mikhail5545/product-service-go v0.0.3-alpha.0.20251115202935-a2b177e6c428
-	github.com/mikhail5545/proto-go v0.1.29
+	github.com/mikhail5545/proto-go v0.1.34
 	github.com/muxinc/mux-go/v6 v6.0.0
 	google.golang.org/grpc v1.76.0
 	google.golang.org/protobuf v1.36.10

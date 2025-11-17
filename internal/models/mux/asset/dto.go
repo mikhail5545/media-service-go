@@ -26,9 +26,14 @@ import (
 // AssetResponse is a DTO that combines the core Asset model with its metadata.
 type AssetResponse struct {
 	*Asset
-	Title     string            `json:"title,omitempty"`
-	CreatorID string            `json:"creator_id,omitempty"`
-	Owners    []metamodel.Owner `json:"owners,omitempty"`
+	// Title is populated from a separate ArangoDB table.
+	Title string `json:"title,omitempty"`
+	// CreatorID is populated from a separate ArangoDB table.
+	CreatorID string `json:"creator_id,omitempty"`
+	// Owners is populated from a separate ArangoDB table.
+	Owners []metamodel.Owner `json:"owners,omitempty"`
+	// Tracks are populated from a separate details PostgreSQL table.
+	Tracks []MuxWebhookTrack `json:"tracks,omitempty"`
 }
 
 type UpdateOwnersRequest struct {
@@ -92,46 +97,46 @@ type MuxWebhookEnvironment struct {
 // MuxWebhookData represents the mux webhook data object.
 type MuxWebhookData struct {
 	// Unique identifier for the asset. Max 255 characters.
-	ID        string    `json:"string"`
+	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	// The status of the asset
 	//
 	// 	"created", "ready", "errored"
-	Status string `json:"status"`
+	Status *string `json:"status,omitempty"`
 	// The duration of the asset in seconds (max duration for a single asset is 12 hours).
-	Duration float32 `json:"duration"`
+	Duration *float32 `json:"duration,omitempty"`
 	// The resolution tier that the asset was ingested at, affecting billing for ingest & storage.
 	// The asset may be delivered at lower resolutions depending on the device and bandwidth, however
 	// it cannot be delivered at a higher value than is stored.
 	//
 	//	"audio-only", "720p", "1080p", "1440p", "2160p"
-	ResolutionTier string `json:"resolution_tier"`
+	ResolutionTier *string `json:"resolution_tier,omitempty"`
 	// Max resolution tier can be used to control the maximum `resolution_tier` your asset is encoded,
 	// stored and streamed at. If not set, this defauls to `1080p`.
-	MaxResolutionTier string `json:"max_resolution_tier"`
+	MaxResolutionTier *string `json:"max_resolution_tier,omitempty"`
 	// The video quality controls the cost, quality, and available platform features for the asset. The
 	// default video quality for an account can be set in the Mux Dashboard.
-	VideoQuality string `json:"video_quality"`
+	VideoQuality *string `json:"video_quality,omitempty"`
 	// The maximum frame rate that has been stored for the asset. The asset may be delivered
 	// at lower frame rates depending on the device and bandwidth, however it cannot be delivered at a higher
 	// value than is stored. This field may return `-1` if the frame rate of the input cannot be reliably
 	// determined.
-	MaxStoredFrameRate string `json:"max_stored_frame_rate"`
+	MaxStoredFrameRate *string `json:"max_stored_frame_rate,omitempty"`
 	// The aspect ratio of the asset.
 	//
 	// 	"width:height" -> "16:9"
-	AspectRatio string `json:"aspect_ratio"`
+	AspectRatio *string `json:"aspect_ratio,omitempty"`
 	// An array of Playback ID objects. Use these to create HLS playback URLs.
 	// See [play_your_videos] for more details.
 	//
 	// [play_your_videos]: https://docs.mux.com/guides/play-your-videos
 	PlaybackIDs []MuxWebhookPlaybackID `json:"playback_ids"`
 	// The individual media tracks that make up an asset.
-	Tracks []MuxWebhookTrack `json:"tracks"`
+	Tracks []MuxWebhookTrack `json:"tracks,omitempty"`
 	// Object that describes any errors that happened when processing this asset.
-	Errors MuxWebhookError `json:"errors"`
+	Errors *MuxWebhookError `json:"errors,omitempty"`
 	// Unique identifier for the direct upload. This is an optional parameter added when the asset is created from a direct upload.
-	UploadID string `json:"upload_id"`
+	UploadID *string `json:"upload_id,omitempty"`
 	// This field can be set to anything. It will be included in the asset details
 	// and related webhooks. If you're looking for more structured metadata, such as `title` or `external_id`, you can set
 	// the `meta` object instead. Max 255 characters.
@@ -139,11 +144,11 @@ type MuxWebhookData struct {
 	// The type of ingest used to create the asset.
 	//
 	//	"on_demand_url", "on_demand_direct_upload", "on_demand_clip", "live_rtmp", "live_srt"
-	IngestType string `json:"ingest_type"`
+	IngestType *string `json:"ingest_type,omitempty"`
 	// Customer provided metadata about this asset.
 	//
 	// Note: this metadata may be publicly available via the video player. Do not include PII or sensitive information.
-	Meta MuxWebhookMeta `json:"meta"`
+	Meta *MuxWebhookMeta `json:"meta,omitempty"`
 	// Detailed state information about the asset ingest process.
 	Progress MuxWebhookProgress `json:"progress"`
 }
@@ -154,11 +159,11 @@ type MuxWebhookData struct {
 // Note: this metadata may be publicly available via the video player. Do not include PII or sensitive information.
 type MuxWebhookMeta struct {
 	// The asset title. Max 512 code points.
-	Title string `json:"string"`
+	Title *string `json:"title,omitempty"`
 	// This is an identifier you provide to keep track of the creator of the asset. Max 128 code points.
-	CreatorID string `json:"creator_id"`
+	CreatorID *string `json:"creator_id,omitempty"`
 	// This is an identifier you provide to link the asset to your own data. Max 128 code points.
-	ExternalID string `json:"external_id"`
+	ExternalID *string `json:"external_id"`
 }
 
 // MuxWebhookPlaybackID represents Mux webhook Playback ID object.
@@ -176,7 +181,7 @@ type MuxWebhookPlaybackID struct {
 	// [DRM documentation]: https://docs.mux.com/guides/protect-videos-with-drm
 	Policy string `json:"policy"`
 	// The DRM configuration used by this playback ID. Must only be set when policy is set to drm.
-	DrmConfigurationID string `json:"drm_configuration_id"`
+	DrmConfigurationID *string `json:"drm_configuration_id,omitempty"`
 }
 
 type MuxWebhookTrack struct {
@@ -189,46 +194,46 @@ type MuxWebhookTrack struct {
 	// The duration in seconds for the track media. This parameter
 	// is not set for "text" type tracks. This field is optional and may not be set. The top level
 	// `duration` field of an asset will always be set.
-	Duration int `json:"duration"`
+	Duration *float64 `json:"duration,omitempty"`
 	// The maximum width in pixels available for the track. Only set for the "video" type tracks.
-	MaxWidth int `json:"max_width"`
+	MaxWidth *int64 `json:"max_width,omitempty"`
 	// the maximum height in pixels available for the track. Only set for the "video" type tracks.
-	MaxHeight int `json:"max_height"`
+	MaxHeight *int64 `json:"max_height,omitempty"`
 	// The maximum frame rate available for the track. Only set for the "video" type tracks. This field
 	// may return -1 if the frame rate of the input cannot be reliably determined.
-	MaxFrameRate float32 `json:"max_frame_rate"`
+	MaxFrameRate *float64 `json:"max_frame_rate,omitempty"`
 	// The maximum number of audio channels the track supports. Only set for the "audio" type track.
-	MaxChannels int `json:"max_channels"`
+	MaxChannels *int64 `json:"max_channels,omitempty"`
 	// This parameter is set for "text" type tracks.
 	//
 	//	"subtitles"
-	TextType string `json:"text_type"`
+	TextType *string `json:"text_type,omitempty"`
 	// The source of the text contained in a Track of type "text".
 	//
 	//	"uploaded", "embedded", "generated_live", "generated_live_final", "generated_vod"
-	TextSource string `json:"text_source"`
+	TextSource *string `json:"text_source,omitempty"`
 	// The language code value represents BCP 47 specification compliant value. For examle, "en" for English or "en-US" for the
 	// US version of English. This parameter is only set for the "text" and "audio" track types.
-	LanguageCode string `json:"language_code"`
+	LanguageCode *string `json:"language_code,omitempty"`
 	// The name of the track containing a human-readable description. The HLS manifest will associate a subtitle "text"
 	// or "audio" track with this value. For example, the value should be "English" for a subtitle text track for the `language_code`
 	// value of "en-US". This parameter is only set for "text" and "audio" tracks.
-	Name string `json:"name"`
+	Name *string `json:"name,omitempty"`
 	// Indicates the track provides Subtitles for the Deaf or Hard-Of-Hearing. This parameter is set tracks where
 	// `type` is "text" and `text_type` is subtitles.
-	ClosedCaptions bool `json:"closed_captions"`
+	ClosedCaptions *bool `json:"closed_captions,omitempty"`
 	// Arbitrary user-supplied metadata set for the track either when creating the asset or track. This parameter
 	// is only set for "text" type tracks. Max 255 characters.
-	Passthrough string `json:"passthrough"`
+	Passthrough *string `json:"passthrough,omitempty"`
 	// The status of the track. This parameter os only set for "text" type tracks.
 	//
 	//	"preparing", "ready", "errored", "deleted"
-	Status string `json:"status"`
+	Status *string `json:"status,omitempty"`
 	// For an audio track, indicates that this is the primary audio track, ingested from the main input
 	// of this asset. The primary audio track cannot be deleted.
-	Primary bool `json:"primary"`
+	Primary *bool `json:"primary,omitempty"`
 	// Object that describes any errors that happened when processing this asset.
-	Errors MuxWebhookError `json:"errors"`
+	Errors *MuxWebhookError `json:"errors,omitempty"`
 }
 
 // MuxWebhookError represents mux webhook errors object.
@@ -249,7 +254,7 @@ type MuxWebhookProgress struct {
 	//
 	//	"ingesting", "transcoding", "completed", "live", "errored"
 	State string `json:"state"`
-	// Represents the estimated completion percentage. Returns 0-100 when in
-	// "ingesting", "transcoding", or "completed" state, and -1 when in "live" or "errored" state.
-	Progress int `json:"progress"`
+	// Represents the estimated completion percentage. Returns 0-100 when in "ingesting", "transcoding",
+	// or "completed" state, and -1 when in "live" or "errored" state.
+	Progress *float64 `json:"progress,omitempty"`
 }

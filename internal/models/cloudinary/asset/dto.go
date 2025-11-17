@@ -76,7 +76,7 @@ type SuccessfulUploadRequest struct {
 	ResourceType       string `json:"resource_type"`
 	Format             string `json:"format"`
 	Width              *int   `json:"width"`
-	Height             *int   `json:"heihgt"`
+	Height             *int   `json:"height"`
 	URL                string `json:"url"`
 	SecureURL          string `json:"secure_url"`
 	AssetFolder        string `json:"asset_folder"`
