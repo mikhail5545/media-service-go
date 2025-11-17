@@ -106,7 +106,7 @@ type Service interface {
 	//
 	// Returns newly created asset.
 	// Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-	SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error)
+	SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.AssetResponse, error)
 	// CleanupOrphanAssets finds and deletes assets that exist in Cloudinary but not in the local database.
 	//
 	// Returns the number of cleaned assets.
@@ -632,7 +632,7 @@ func (s *service) Deassociate(ctx context.Context, req *assetmodel.DeassociateRe
 //
 // Returns newly created asset.
 // Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-func (s *service) SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error) {
+func (s *service) SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.AssetResponse, error) {
 	if err := req.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
@@ -670,7 +670,9 @@ func (s *service) SuccessfulUpload(ctx context.Context, req *assetmodel.Successf
 		return nil, fmt.Errorf("failed to notify external services: %w", err)
 	}
 
-	return newAsset, nil
+	response := s.combineAssetAndMetadata(newAsset, &metamodel.AssetMetadata{Key: newAsset.ID, Owners: req.Owners})
+
+	return response, nil
 }
 
 // CleanupOrphanAssets finds and deletes assets that exist in Cloudinary but not in the local database.

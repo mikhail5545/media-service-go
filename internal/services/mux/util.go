@@ -24,6 +24,7 @@ import (
 	"fmt"
 
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
+	detailmodel "github.com/mikhail5545/media-service-go/internal/models/mux/detail"
 	metamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -87,7 +88,11 @@ func diffOwnerMaps(old, new map[string]map[string]struct{}) (toAdd, toDelete map
 }
 
 // combineAssetAndMetadata is a helper to merge an Asset and its metadata into an AssetResponse DTO.
-func (s *service) combineAssetAndMetadata(asset *assetmodel.Asset, metadata *metamodel.AssetMetadata) *assetmodel.AssetResponse {
+func (s *service) combineAssetAndMetadata(
+	asset *assetmodel.Asset,
+	metadata *metamodel.AssetMetadata,
+	details *detailmodel.AssetDetail,
+) *assetmodel.AssetResponse {
 	response := &assetmodel.AssetResponse{
 		Asset: asset,
 	}
@@ -96,6 +101,10 @@ func (s *service) combineAssetAndMetadata(asset *assetmodel.Asset, metadata *met
 		response.Title = metadata.Title
 		response.CreatorID = metadata.CreatorID
 		response.Owners = metadata.Owners
+	}
+
+	if details != nil {
+		response.Tracks = details.Tracks
 	}
 
 	return response

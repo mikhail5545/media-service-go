@@ -38,9 +38,7 @@ type Asset struct {
 	// populated from the mux webhooks.
 	MuxAssetID *string `gorm:"null" json:"mux_asset_id,omitempty"`
 	// Slice of Mux PlaybackID objects. This field is populated from the mux webhooks. Stored as a JSON array.
-	PlaybackIDs []MuxWebhookPlaybackID `gorm:"type:jsonb" json:"playback_ids,omitempty"`
-	// Slice of Mux Track objects. This field is populated from the mux webhooks. Stored as a JSON array.
-	Tracks []MuxWebhookTrack `gorm:"type:jsonb" json:"tracks,omitempty"`
+	MuxPlaybackIDs []MuxWebhookPlaybackID `gorm:"type:jsonb" json:"playback_ids,omitempty"`
 	// The detailed state of the asset ingest progress. This field is useful for
 	// relaying more granular processin information to end users when a non-standard input
 	// is encountered.

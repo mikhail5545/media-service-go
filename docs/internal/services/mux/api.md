@@ -10,31 +10,31 @@ The MUX service is defined by the `Service` interface and implemented by the `se
 
 Key methods include:
 
-- `Get`: Retrieves a single not soft-deleted asset and it's metadata from the database (see [Get Operation Flow](./flow/get_operation_flow.md)).
-- `GetWithDeleted`: Retrieves a single asset and it's metadata from the database including soft-deleted ones (see [Get Operation Flow](./flow/get_operation_flow.md)).
-- `List`: Retrieves a paginated list of all not soft-deleted assets from the database and their metadata (see [List Operation Flow](./flow/list_operation_flow.md)).
-- `ListDeleted`: Retrieves a paginated list of all soft-deleted assets from the database and their metadata (see [List Operation Flow](./flow/list_operation_flow.md)).
-- `ListUnowned`: Retrieves a paginated list of all unowned assets from the database and their metadata (see [List Operation Flow](./flow/list_operation_flow.md)).
-- `Delete`: Performs soft-delete of an asset. (see [Delete Process Flow](./flow/delete_flow.md)).
-- `DeletePermanent`: Performs a complete delete of a mux upload, also deletes mux asset via MUX Direct Upload API if upload.MuxAssetId is populated (see [Delete Permanent Process Flow](./flow/delete_permanent_flow.md)).
-- `Restore`: Restores soft-deleted asset (see [Restore Process Flow](./flow/restore_flow.md)).
-- `CreateUploadURL`: Creates signed upload url for direct upload to the MUX (see [Crate Upload URL Process Flow](./flow/create_upload_url_flow.md)).
-- `Associate`: Associates an asset with a single owner.
-- `CreateUnownedUploadURL`: Creates a MUX direct upload URL for an asset without an initial owner.
-- `Deassociate`: Deassociates an asset from a single owner.
-- `UpdateOwners`: Updates the list of owners for a given asset.
-- `HandleAssetCreatedWebhook`: Processes an incoming Mux webhook with "video.asset.created" event type.
-- `HandleAssetReadyWebhook`: Processes an incoming Mux webhook with "video.asset.ready" event type.
+- `Get`: Retrieves a single published and not soft-deleted mux upload record from the database along with it's metadata.
+- `GetWithDeleted`: Retrieves a single mux upload record from the database along with it's metadata, including soft-deleted ones.
+- `List`: Retrieves a paginated list of all published and not soft-deleted mux upload records along with their metadata.
+- `ListDeleted`: Retrieves a paginated list of all soft-deleted mux upload records and their metadata.
+- `ListUnowned`: Retrieves a paginated list of all unowned mux upload records and their metadata.
+- `Delete`: Performs a soft delete of an asset. It should be called only for assets that don't have any owner or association.
+- `DeletePermanent`: Performs a complete delete of a mux upload. It also deletes mux asset via MUX Direct Upload API if `upload.MuxAssetId` is populated.
+- `Restore`: Performs a restore of a mux upload record. Mux upload record is not being published. This should be done manually.
+- `CreateUploadURL`: Creates upload URL for the direct upload using mux direct upload api. If owner already has an association with the asset, both owner and asset will be deassociated and the new asset instance will be created.
+- `CreateUnownedUploadURL`: Creates an upload URL for a new asset without an initial owner.
+- `Associate`: Links an existing asset to an owner. It also updates asset metadata.
+- `Deassociate`: Removes the link between an asset and an owner. It also deletes owner from asset metadata.
+- `UpdateOwners`: Processes asset ownership relations changes. It receives an updated list of asset owners, updates local DB metadata for asset (about it's owners), processes the diff between old and new owners and notifies external services about this ownership changes via gRPC connection.
+- `HandleAssetCreatedWebhook`: Processes an incoming Mux webhook with "video.asset.created" event type, finds the corresponding asset, and updates it in a patch-like manner.
+- `HandleAssetReadyWebhook`: Processes an incoming Mux webhook with "video.asset.ready" event type, finds the corresponding asset, and updates it in a patch-like manner.
 
 ## Get
 
-The `Get` method retrieves a single not soft-deleted asset from the database.
+The `Get` method retrieves a single published and not soft-deleted mux upload record from the database along with it's metadata.
 
 ### Input parameters
 
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
-| assetID   | string | Required | The UUID of the asset to get.    |
+| id        | string | Required | The UUID of the asset to get.    |
 
 ### Output
 
@@ -44,7 +44,7 @@ Returns an `error` if operation fails. Returns `*assetmodel.AssetResponse` struc
 
 The method:
 
-1. Validates that the `assetID` is a valid UUID.
+1. Validates that the `id` is a valid UUID.
 2. Retrieves the asset from the database.
 3. If no asset found, returns `ErrNotFound`.
 4. Retrieves the asset's metadata (title, owners, etc.).
@@ -52,15 +52,15 @@ The method:
 
 ### Errors
 
-- `ErrInvalidArgument`: `assetID` is not a valid UUID (HTTP 400).
+- `ErrInvalidArgument`: `id` is not a valid UUID (HTTP 400).
 - `ErrNotFound`: Asset not found in the database (HTTP 404).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-assetID := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-asset, err := svc.Get(ctx, assetID)
+id := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+asset, err := svc.Get(ctx, id)
 if err != nil{
     log.Fatal(err)
 }
@@ -69,42 +69,43 @@ fmt.Printf("Asset title: %s\n", asset.Title)
 
 ## GetWithDeleted
 
-The `GetWithDeleted` method retrieves a single asset from the database including soft-deleted. It can be used when client doesn't care about potential deleted asset data fetch, or intentional fetch of soft-deleted asset data.
+The `GetWithDeleted` method retrieves a single mux upload record from the database along with it's metadata, including soft-deleted ones.
 
 ### Input parameters
 
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
-| assetID   | string | Required | The UUID of the asset to get.    |
+| id        | string | Required | The UUID of the asset to get.    |
 
 ### Output
 
-Returns an `error` if operation fails. Returns `*Asset` struct on success.
+Returns an `error` if operation fails. Returns `*assetmodel.AssetResponse` struct on success, which contains the asset data and its metadata.
 
 ### Description
 
 The method:
 
-1. Validates that the `assetID` is a valid UUID.
-2. Retrieves the asset from the database.
+1. Validates that the `id` is a valid UUID.
+2. Retrieves the asset from the database including soft-deleted ones.
 3. If no asset found, returns `ErrNotFound`.
-4. Returns asset.
+4. Retrieves the asset's metadata (title, owners, etc.).
+5. Returns a combined `AssetResponse`.
 
 ### Errors
 
-- `ErrInvalidArgument`: `assetID` is not a valid UUID (HTTP 400).
+- `ErrInvalidArgument`: `id` is not a valid UUID (HTTP 400).
 - `ErrNotFound`: Asset not found in the database (HTTP 404).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-assetID := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-asset, err := svc.GetWithDeleted(ctx, assetID)
+id := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+asset, err := svc.GetWithDeleted(ctx, id)
 if err != nil{
     log.Fatal(err)
 }
-fmt.Printf("Asset mux uplaod id: %s\n", asset.MuxUploadID)
+fmt.Printf("Asset mux upload id: %s\n", asset.MuxUploadID)
 if asset.DeletedAt != nil{
     fmt.Printf("Asset was deleted at: %s\n", asset.DeletedAt.Time.String())
 }
@@ -112,31 +113,31 @@ if asset.DeletedAt != nil{
 
 ## List
 
-The `List` method returns a paginated list of all not soft-deleted assets in the database along with the total number of such records in the database.
+The `List` method returns a paginated list of all published and not soft-deleted mux upload records along with their metadata.
 
 ### Input parameters
 
 |Parameter|Type|Required|Description|
 |---------|----|--------|-----------|
 |limit    |int | required| Limits the maximum length of the resulting list.|
-|offset|int|required| Sets an offset for the list starting from 0.|
+|offset   |int | required| Sets an offset for the list starting from 0.|
 
-For example, if method was called with `limit = 10` and `offst = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
+For example, if method was called with `limit = 10` and `offset = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
 
 ### Output
 
-Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.Asset` and the total number of all not soft-deleted assets `int64` in the database.
-
+Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.AssetResponse` and the total number of all published and not soft-deleted assets `int64` in the database.
 
 ### Description
 
 The method:
 
 1. Retrieves the list of assets from the database applying `limit` and `offset`.
-3. If retrieve operation was unsuccessful, returns an `errror`.
-3. Counts the total number of not soft-deleted assets in the database.
+2. If retrieve operation was unsuccessful, returns an `error`.
+3. Counts the total number of published and not soft-deleted assets in the database.
 4. If count operation was unsuccessful, returns an `error`.
-5. Returns assets and count.
+5. For each asset, retrieves the corresponding metadata.
+6. Returns assets and count.
 
 ### Errors
 
@@ -146,83 +147,39 @@ The method:
 
 ```go
 limit, offset := 10, 5
-assets, err := svc.List(ctx, limit, offset)
+assets, total, err := svc.List(ctx, limit, offset)
 if err != nil{
     log.Fatal(err)
 }
-fmt.Printf("List returned %d assets\n", len(assets))
-```
-
-## ListDeleted
-
-The `ListDeleted` method returns a paginated list of all soft-deleted assets in the database along with the total number of such records in the database.
-
-### Input parameters
-
-|Parameter|Type|Required|Description|
-|---------|----|--------|-----------|
-|limit    |int | required| Limits the maximum length of the resulting list.|
-|offset|int|required| Sets an offset for the list starting from 0.|
-
-For example, if method was called with `limit = 10` and `offst = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
-
-### Output
-
-Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.Asset` and the total number of all soft-deleted assets `int64` in the database.
-
-
-### Description
-
-The method:
-
-1. Retrieves the list of assets from the database applying `limit` and `offset`.
-3. If retrieve operation was unsuccessful, returns an `errror`.
-3. Counts the total number of soft-deleted assets in the database.
-4. If count operation was unsuccessful, returns an `error`.
-5. Returns assets and count.
-
-### Errors
-
-- Other error (treat as internal): Database error (HTTP 500).
-
-### Example usage
-
-```go
-limit, offset := 10, 5
-assets, err := svc.ListDeleted(ctx, limit, offset)
-if err != nil{
-    log.Fatal(err)
-}
-fmt.Println("List returned %d assets\n", len(assets))
+fmt.Printf("List returned %d assets (total: %d)\n", len(assets), total)
 ```
 
 ## ListUnowned
 
-The `ListUnowned` method returns a paginated list of unowned assets in the database along with the total number of such records in the database. Asset treats as **Unowned** *if it doesn't have any owners*. Deleted assets cannot be included in the result. 
+The `ListUnowned` method returns a paginated list of all unowned mux upload records and their metadata.
 
 ### Input parameters
 
 |Parameter|Type|Required|Description|
 |---------|----|--------|-----------|
 |limit    |int | required| Limits the maximum length of the resulting list.|
-|offset|int|required| Sets an offset for the list starting from 0.|
+|offset   |int | required| Sets an offset for the list starting from 0.|
 
-For example, if method was called with `limit = 10` and `offst = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
+For example, if method was called with `limit = 10` and `offset = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
 
 ### Output
 
-Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.Asset` and the total number of unowned assets `int64` in the database.
-
+Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.AssetResponse` and the total number of all unowned assets `int64` in the database.
 
 ### Description
 
 The method:
 
-1. Retrieves the list of assets from the database applying `limit` and `offset`.
-3. If retrieve operation was unsuccessful, returns an `errror`.
-3. Counts the total number of unowned assets in the database.
-4. If count operation was unsuccessful, returns an `error`.
-5. Returns assets and count.
+1. Retrieves the list of unowned asset IDs from the metadata repository.
+2. If retrieve operation was unsuccessful, returns an `error`.
+3. Fetches assets by the unowned IDs applying `limit` and `offset`.
+4. Retrieves the metadata for each asset.
+5. Returns assets and total count of unowned assets.
 
 ### Errors
 
@@ -232,22 +189,65 @@ The method:
 
 ```go
 limit, offset := 10, 5
-assets, err := svc.ListUnowned(ctx, limit, offset)
+assets, total, err := svc.ListUnowned(ctx, limit, offset)
 if err != nil{
     log.Fatal(err)
 }
-fmt.Println("List returned %d assets\n", len(assets))
+fmt.Printf("List returned %d unowned assets (total: %d)\n", len(assets), total)
+```
+
+## ListDeleted
+
+The `ListDeleted` method returns a paginated list of all soft-deleted mux upload records and their metadata.
+
+### Input parameters
+
+|Parameter|Type|Required|Description|
+|---------|----|--------|-----------|
+|limit    |int | required| Limits the maximum length of the resulting list.|
+|offset   |int | required| Sets an offset for the list starting from 0.|
+
+For example, if method was called with `limit = 10` and `offset = 5`, method will return **first 10** asset records **starting from 5th** record **ordered by creation time descending**.
+
+### Output
+
+Returns an `error` if operation fails. On success returns a slice of the assets `[]assetmodel.AssetResponse` and the total number of all soft-deleted assets `int64` in the database.
+
+### Description
+
+The method:
+
+1. Retrieves the list of soft-deleted assets from the database applying `limit` and `offset`.
+2. If retrieve operation was unsuccessful, returns an `error`.
+3. Counts the total number of soft-deleted assets in the database.
+4. If count operation was unsuccessful, returns an `error`.
+5. For each asset, retrieves the corresponding metadata.
+6. Returns assets and count.
+
+### Errors
+
+- Other error (treat as internal): Database error (HTTP 500).
+
+### Example usage
+
+```go
+limit, offset := 10, 5
+assets, total, err := svc.ListDeleted(ctx, limit, offset)
+if err != nil{
+    log.Fatal(err)
+}
+fmt.Printf("List returned %d deleted assets (total: %d)\n", len(assets), total)
 ```
 
 ## Delete
 
-The `Delete` method performs soft-delete of the asset. If asset has any owners, they will be deassociated and all asset metadata about owners will be cleared.
+The `Delete` performs a soft delete of an asset. It should be called only for assets that don't have any owner or association. If asset has any owners, they will be deassociated and local asset metadata about ownership will be deleted.
 
 ### Input parameters
 
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
-| assetID   | string | Required | The UUID of the asset to delete. |
+| id        | string | Required | The UUID of the asset to delete. |
 
 ### Output
 
@@ -257,24 +257,24 @@ Returns an `error` if the operation fails. A `nil` error indicates success.
 
 The method:
 
-1. Validates that the `assetID` is a valid UUID.
+1. Validates that the `id` is a valid UUID.
 2. Starts a database transaction.
-3. Retrieves the asset and its ownership metadata.
+3. Retrieves the asset.
 4. If the asset has owners, it notifies external services to remove the associations and then deletes the ownership metadata from ArangoDB.
 5. Soft-deletes the asset record in the relational database (e.g., by setting a `deleted_at` timestamp).
 6. Commits the transaction.
 
 ### Errors
 
-- `ErrInvalidArgument`: `assetID` is not a valid UUID (HTTP 400).
+- `ErrInvalidArgument`: `id` is not a valid UUID (HTTP 400).
 - `ErrNotFound`: Asset not found in the database (HTTP 404).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-assetID := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-if err := svc.Delete(ctx, assetID); err != nil{
+id := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+if err := svc.Delete(ctx, id); err != nil{
     log.Fatal(err)
 }
 fmt.Println("Asset soft-deleted successfully.")
@@ -282,13 +282,13 @@ fmt.Println("Asset soft-deleted successfully.")
 
 ## DeletePermanent
 
-The `DeletePermanent` permanently deletes an asset and completely clears it's metadata, also deleting asset from MUX. It should be called only for soft-deleted assets.
+The `DeletePermanent` performs a complete delete of a mux upload. It also deletes mux asset via MUX Direct Upload API if `upload.MuxAssetId` is populated.
 
 ### Input parameters
 
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
-| assetID   | string | Required | The UUID of the asset to delete. |
+| id        | string | Required | The UUID of the asset to delete. |
 
 ### Output
 
@@ -298,39 +298,39 @@ Returns an `error` if the operation fails. A `nil` error indicates success.
 
 The method:
 
-1. Validates that the `assetID` is a valid UUID.
+1. Validates that the `id` is a valid UUID.
 2. Starts a database transaction.
 3. Retrieves the asset.
-4. If asset has `MuxUploadID` field populated, it deletes the mux upload.
+4. If asset has `MuxAssetID` field populated, it deletes the mux asset via MUX API.
 5. Completely removes asset metadata from ArangoDB.
-6. Deletes the asset itself.
+6. Deletes the asset permanently from the database.
 7. Commits the transaction.
 
 ### Errors
 
-- `ErrInvalidArgument`: `assetID` is not a valid UUID (HTTP 400).
+- `ErrInvalidArgument`: `id` is not a valid UUID (HTTP 400).
 - `ErrNotFound`: Asset not found in the database (HTTP 404).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-assetID := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-if err := svc.DeletePermanent(ctx, assetID); err != nil{
+id := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+if err := svc.DeletePermanent(ctx, id); err != nil{
     log.Fatal(err)
 }
-fmt.Println("Asset deleted successfully.")
+fmt.Println("Asset deleted permanently successfully.")
 ```
 
 ## Restore
 
-The `Restore` restores a soft-deleted aset.
+The `Restore` performs a restore of a mux upload record. Mux upload record is not being published. This should be done manually.
 
 ### Input parameters
 
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
-| assetID   | string | Required | The UUID of the asset to restore.|
+| id        | string | Required | The UUID of the asset to restore.|
 
 ### Output
 
@@ -340,7 +340,7 @@ Returns an `error` if the operation fails. A `nil` error indicates success.
 
 The method:
 
-1. Validates that the `assetID` is a valid UUID.
+1. Validates that the `id` is a valid UUID.
 2. Starts a database transaction.
 3. Restores the asset record.
 4. If asset not found, returns `ErrNotFound`.
@@ -348,15 +348,15 @@ The method:
 
 ### Errors
 
-- `ErrInvalidArgument`: `assetID` is not a valid UUID (HTTP 400).
+- `ErrInvalidArgument`: `id` is not a valid UUID (HTTP 400).
 - `ErrNotFound`: Asset not found in the database (HTTP 404).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-assetID := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-if err := svc.Restore(ctx, assetID); err != nil{
+id := "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+if err := svc.Restore(ctx, id); err != nil{
     log.Fatal(err)
 }
 fmt.Println("Asset restored successfully.")
@@ -364,7 +364,7 @@ fmt.Println("Asset restored successfully.")
 
 ## CreateUploadURL
 
-The `CreateUploadURL` creates a signed upload url for direct asset upload to the MUX. It returns complete generated upload url.
+The `CreateUploadURL` creates upload URL for the direct upload using mux direct upload api. It uses [muxclient.Client.CreateUploadURL] method to access MUX direct upload API. If owner already has an association with the asset, both owner and asset will be deassociated and the new asset instance will be created.
 
 ### Input parameters
 
@@ -373,13 +373,13 @@ The method accepts a `CreateUploadURLRequest` struct with the following fields:
 | Parameter | Type   | Required | Description                      |
 |-----------|--------|----------|----------------------------------|
 | OwnerID   | string | Required | The UUID of the asset owner.     |
-| OwnerType   | string | Required | Type of the asset owner (e.g., "course_part").     |
-| Title   | string | Required | Title for the asset.     |
-| CreatorID   | string | Required | The UUID of the asset creator (user).     |
+| OwnerType | string | Required | Type of the asset owner (e.g., "course_part"). |
+| Title     | string | Required | Title for the asset.             |
+| CreatorID | string | Required | The UUID of the asset creator (user). |
 
 ### Output
 
-Returns an `nil` and `error` if the operation fails. On success returns `*muxgo.UploadResponse` struct with resulting payload and `nil` as an error.
+Returns an `error` if the operation fails. On success returns `*muxgo.UploadResponse` struct with resulting payload.
 
 ### Description
 
@@ -389,7 +389,7 @@ The method:
 2. Starts a database transaction.
 3. Retrieves owner via gRPC call.
 4. Validates that owner isn't associated with another asset already.
-5. Calls Mux API to generate upload url.
+5. Calls Mux API to generate upload URL.
 6. Creates new asset record.
 7. Associates newly created asset with owner.
 8. Commits the transaction.
@@ -399,13 +399,12 @@ The method:
 - `ErrInvalidArgument`: Request payload is invalid (HTTP 400).
 - `ErrOwnerHasAsset`: Owner already associated with some asset (HTTP 400).
 - `ErrNotFound`: Any record not found in the database (HTTP 404).
-- `ErrMuxAPI`: Mux API error (HTTP 503).
 - Other error (treat as internal): Database error (HTTP 500).
 
 ### Example usage
 
 ```go
-req := &CreateUploadURLRequest{
+req := &assetmodel.CreateUploadURLRequest{
     OwnerID: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     OwnerType: "course_part",
     Title: "My new asset",
@@ -419,9 +418,57 @@ if err != nil{
 fmt.Printf("Upload URL: %s\n", res.Data.Url)
 ```
 
+## CreateUnownedUploadURL
+
+The `CreateUnownedUploadURL` creates an upload URL for a new asset without an initial owner.
+
+### Input parameters
+
+The method accepts a `CreateUnownedUploadURLRequest` struct with the following fields:
+
+| Parameter | Type   | Required | Description                      |
+|-----------|--------|----------|----------------------------------|
+| Title     | string | Required | Title for the asset.             |
+| CreatorID | string | Required | The UUID of the asset creator (user). |
+
+### Output
+
+Returns an `error` if the operation fails. On success returns `*muxgo.UploadResponse` struct with resulting payload.
+
+### Description
+
+The method:
+
+1. Validates that the request payload is valid.
+2. Starts a database transaction.
+3. Calls Mux API to generate upload URL.
+4. Creates new asset record.
+5. Creates asset metadata with no owners.
+6. Commits the transaction.
+
+### Errors
+
+- `ErrInvalidArgument`: Request payload is invalid (HTTP 400).
+- Other error (treat as internal): Database error (HTTP 500).
+
+### Example usage
+
+```go
+req := &assetmodel.CreateUnownedUploadURLRequest{
+    Title: "My new asset",
+    CreatorID: "f22accvb-33cc-4372-a567-0e02b2c33sdf9",
+}
+
+res, err := svc.CreateUnownedUploadURL(ctx, req)
+if err != nil{
+    log.Fatal(err)
+}
+fmt.Printf("Upload URL: %s\n", res.Data.Url)
+```
+
 ## Associate
 
-The `Associate` method associates an asset with a single owner.
+The `Associate` links an existing asset to an owner. It also updates asset metadata.
 
 ### Input parameters
 
@@ -436,6 +483,10 @@ The method accepts a `AssociateRequest` struct with the following fields:
 ### Output
 
 Returns an `error` if the operation fails. A `nil` error indicates success.
+
+### Description
+
+The method:
 
 1. Validates that the request payload is valid.
 2. Starts a database transaction.
@@ -457,7 +508,7 @@ Returns an `error` if the operation fails. A `nil` error indicates success.
 ### Example usage
 
 ```go
-req := &AssociateRequest{
+req := &assetmodel.AssociateRequest{
     ID: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     OwnerID: "f22accvb-33cc-4372-a567-0e02b2c33sdf9",
     OwnerType: "course_part",
@@ -466,12 +517,12 @@ req := &AssociateRequest{
 if err := svc.Associate(ctx, req); err != nil{
     log.Fatal(err)
 }
-fmt.Println("Asset associated with new owner successfuly")
+fmt.Println("Asset associated with new owner successfully")
 ```
 
 ## Deassociate
 
-The `Deassociate` method deassociated an asset from a single owner.
+The `Deassociate` removes the link between an asset and an owner. It also deletes owner from asset metadata.
 
 ### Input parameters
 
@@ -487,13 +538,16 @@ The method accepts a `DeassociateRequest` struct with the following fields:
 
 Returns an `error` if the operation fails. A `nil` error indicates success.
 
+### Description
+
+The method:
+
 1. Validates that the request payload is valid.
-2. Starts a database transaction.
-3. Retrieves asset and it's metadata from the databases.
-4. Removes owner from asset metadata.
-5. Saves updated asset's metadata to the ArangoDB.
-6. Notifies another service to associate owner with asset via gRPC.
-7. Commits transaction.
+2. Ensures asset exists in the database.
+3. Retrieves asset metadata from ArangoDB.
+4. Removes the specified owner from the list of owners.
+5. Updates asset's metadata in ArangoDB to remove the owner.
+6. Notifies external services to remove the association via gRPC.
 
 ### Errors
 
@@ -504,7 +558,7 @@ Returns an `error` if the operation fails. A `nil` error indicates success.
 ### Example usage
 
 ```go
-req := &DeassociateRequest{
+req := &assetmodel.DeassociateRequest{
     ID: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
     OwnerID: "f22accvb-33cc-4372-a567-0e02b2c33sdf9",
     OwnerType: "course_part",
@@ -513,5 +567,144 @@ req := &DeassociateRequest{
 if err := svc.Deassociate(ctx, req); err != nil{
     log.Fatal(err)
 }
-fmt.Println("Asset deassociated from owner successfuly")
+fmt.Println("Asset deassociated from owner successfully")
+```
+
+## UpdateOwners
+
+The `UpdateOwners` processes asset ownership relations changes. It receives an updated list of asset owners, updates local DB metadata for asset (about it's owners), processes the diff between old and new owners and notifies external services about this ownership changes via gRPC connection.
+
+### Input parameters
+
+The method accepts a `UpdateOwnersRequest` struct with the following fields:
+
+| Parameter | Type              | Required | Description                      |
+|-----------|-------------------|----------|----------------------------------|
+| ID        | string            | Required | The UUID of the asset to update. |
+| Owners    | []metamodel.Owner | Required | The new list of owners for the asset. |
+
+### Output
+
+Returns an `error` if the operation fails. A `nil` error indicates success.
+
+### Description
+
+The method:
+
+1. Validates that the request payload is valid.
+2. Ensures asset exists in Postgres before updating metadata in ArangoDB.
+3. Retrieves current asset metadata from ArangoDB.
+4. Calculates the difference between current and new owners (what to add and what to delete).
+5. Updates asset's metadata in ArangoDB with the new list of owners.
+6. Notifies external services about ownership changes via gRPC.
+
+### Errors
+
+- `ErrInvalidArgument`: Request payload is invalid (HTTP 400).
+- `ErrNotFound`: Asset not found in the database (HTTP 404).
+- Other error (treat as internal): Database error (HTTP 500).
+
+### Example usage
+
+```go
+owners := []metamodel.Owner{
+    {OwnerID: "f47ac10b-58cc-4372-a567-0e02b2c3d479", OwnerType: "course_part"},
+    {OwnerID: "f22accvb-33cc-4372-a567-0e02b2c33sdf9", OwnerType: "lesson"},
+}
+
+req := &assetmodel.UpdateOwnersRequest{
+    ID: "e47ac10b-58cc-4372-a567-0e02b2c3d480",
+    Owners: owners,
+}
+
+if err := svc.UpdateOwners(ctx, req); err != nil{
+    log.Fatal(err)
+}
+fmt.Println("Asset owners updated successfully")
+```
+
+## HandleAssetCreatedWebhook
+
+The `HandleAssetCreatedWebhook` processes an incoming Mux webhook with "video.asset.created" event type, finds the corresponding asset, and updates it in a patch-like manner.
+
+### Input parameters
+
+| Parameter | Type                      | Required | Description                      |
+|-----------|---------------------------|----------|----------------------------------|
+| payload   | *assetmodel.MuxWebhook   | Required | The MUX webhook payload to process. |
+
+### Output
+
+Returns an `error` if the operation fails. A `nil` error indicates success.
+
+### Description
+
+The method:
+
+1. Starts a database transaction.
+2. Looks for the asset by UploadID if present in the payload, otherwise by AssetID.
+3. If no asset found, returns `ErrNotFound`.
+4. Builds updates map by comparing the existing asset with the webhook data.
+5. Updates the asset in the database with the changes.
+6. Commits the transaction.
+
+### Errors
+
+- `ErrNotFound`: Asset not found for the given upload_id or asset_id (HTTP 404).
+- Other error (treat as internal): Database error (HTTP 500).
+
+### Example usage
+
+```go
+payload := &assetmodel.MuxWebhook{
+    // Webhook payload from MUX
+}
+
+if err := svc.HandleAssetCreatedWebhook(ctx, payload); err != nil{
+    log.Fatal(err)
+}
+fmt.Println("Webhook processed successfully")
+```
+
+## HandleAssetReadyWebhook
+
+The `HandleAssetReadyWebhook` processes an incoming Mux webhook with "video.asset.ready" event type, finds the corresponding asset, and updates it in a patch-like manner.
+
+### Input parameters
+
+| Parameter | Type                      | Required | Description                      |
+|-----------|---------------------------|----------|----------------------------------|
+| payload   | *assetmodel.MuxWebhook   | Required | The MUX webhook payload to process. |
+
+### Output
+
+Returns an `error` if the operation fails. A `nil` error indicates success.
+
+### Description
+
+The method:
+
+1. Starts a database transaction.
+2. Looks for the asset by UploadID if present in the payload, otherwise by AssetID.
+3. If no asset found, returns `ErrNotFound`.
+4. Builds updates map by comparing the existing asset with the webhook data.
+5. Updates the asset in the database with the changes.
+6. Commits the transaction.
+
+### Errors
+
+- `ErrNotFound`: Asset not found for the given upload_id or asset_id (HTTP 404).
+- Other error (treat as internal): Database error (HTTP 500).
+
+### Example usage
+
+```go
+payload := &assetmodel.MuxWebhook{
+    // Webhook payload from MUX
+}
+
+if err := svc.HandleAssetReadyWebhook(ctx, payload); err != nil{
+    log.Fatal(err)
+}
+fmt.Println("Webhook processed successfully")
 ```
