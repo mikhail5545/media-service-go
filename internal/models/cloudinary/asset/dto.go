@@ -42,12 +42,6 @@ type DeassociateRequest struct {
 	OwnerType string `json:"owner_type"`
 }
 
-type UploadImageResponse struct {
-	ID        string `json:"id"`
-	PublicID  string `json:"public_id"`
-	SecureURL string `json:"secure_url"`
-}
-
 type UpdateOwnersRequest struct {
 	ID     string            `json:"id"`
 	Owners []metamodel.Owner `json:"owners"`

@@ -61,6 +61,165 @@ func (h *Handler) HandleServiceError(c echo.Context, err error) error {
 	return c.JSON(http.StatusInternalServerError, map[string]any{"error": "Internal server error"})
 }
 
+// Get retrieves a single not soft-deleted asset record from the database along with it's metadata.
+//
+// Method: GET
+// Path: /admin/mux/assets/:id
+func (h *Handler) Get(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid asset ID")
+	if err != nil {
+		return err
+	}
+	response, err := h.service.Get(c.Request().Context(), id)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"response": response})
+}
+
+// GetWithDeleted retrieves a single asset record from the database along with it's metadata, including soft-deleted ones.
+//
+// Method: GET
+// Path: /admin/mux/assets/deleted/:id
+func (h *Handler) GetWithDeleted(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid asset ID")
+	if err != nil {
+		return err
+	}
+	response, err := h.service.GetWithDeleted(c.Request().Context(), id)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"response": response})
+}
+
+// List retrieves a paginated list of all not soft-deleted asset records along with their metadata.
+//
+// Method: GET
+// Path: /admin/mux/assets/
+func (h *Handler) List(c echo.Context) error {
+	limit, offset, err := request.GetPaginationParams(c, 10, 0)
+	if err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid pagination params")
+	}
+	responses, total, err := h.service.List(c.Request().Context(), limit, offset)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
+}
+
+// ListDeleted retrieves a paginated list of all soft-deleted asset records along with their metadata.
+//
+// Method: GET
+// Path: /admin/mux/assets/deleted/
+func (h *Handler) ListDeleted(c echo.Context) error {
+	limit, offset, err := request.GetPaginationParams(c, 10, 0)
+	if err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid pagination params")
+	}
+	responses, total, err := h.service.ListDeleted(c.Request().Context(), limit, offset)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
+}
+
+// ListUnowned retrieves a paginated list of all unowned asset records along with their metadata.
+//
+// Method: GET
+// Path: /admin/mux/assets/unowned/
+func (h *Handler) ListUnowned(c echo.Context) error {
+	limit, offset, err := request.GetPaginationParams(c, 10, 0)
+	if err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid pagination params")
+	}
+	responses, total, err := h.service.ListUnowned(c.Request().Context(), limit, offset)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
+}
+
+// UpdateOwners processes asset ownership relations changes. It recieves an updated list of asset owners, updates local DB metadata for asset
+// (about it's owners), processes the diff between old and new owners and notifies external services about this ownership changes via gRPC connection.
+//
+// Method: PUT
+// Path: /admin/mux/assets/:id
+func (h *Handler) UpdateOwners(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid asset ID")
+	if err != nil {
+		return err
+	}
+	var req *assetmodel.UpdateOwnersRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	req.ID = id
+	if err := h.service.UpdateOwners(c.Request().Context(), req); err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// Associate links an existing asset to an owner. It also updates asset medatada.
+//
+// Method: POST
+// Path: /admin/mux/assets/associate/:id
+func (h *Handler) Associate(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid asset ID")
+	if err != nil {
+		return err
+	}
+	var req *assetmodel.AssociateRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	req.ID = id
+	if err := h.service.Associate(c.Request().Context(), req); err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// Deassociate removes the link between an asset and an owner. It also deletes owner from asset metadata.
+//
+// Method: POST
+// Path: /admin/mux/assets/deassociate/:id
+func (h *Handler) Deassociate(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid asset ID")
+	if err != nil {
+		return err
+	}
+	var req *assetmodel.DeassociateRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	req.ID = id
+	if err := h.service.Deassociate(c.Request().Context(), req); err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
+// SuccessfulUpload creates a new asset with provided information and creates owner relations for it.
+// It saves asset metadata about owner relations in the local noSQL db and notifies external services
+// about ownership changes via gRPC connection. This method should be called after successful cloudinary image upload.
+//
+// Method: POST
+// Path: /admin/mux/assets/success/:id
+func (h *Handler) SuccessfulUpload(c echo.Context) error {
+	var req *assetmodel.SuccessfulUploadRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	response, err := h.service.SuccessfulUpload(c.Request().Context(), req)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"response": response})
+}
+
 // CreateSignedUploadURL creates a signature for a direct frontend upload.
 // Direct upload url should be constructed using this params, this function only creates
 // signature for signed upload. It expects a JSON body with Eager, PublicID and File information.

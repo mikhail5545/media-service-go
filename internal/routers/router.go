@@ -22,6 +22,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	admincloudinaryhandler "github.com/mikhail5545/media-service-go/internal/handlers/admin/cloudinary"
 	adminmuxhandler "github.com/mikhail5545/media-service-go/internal/handlers/admin/mux"
+	cldwebhookhandler "github.com/mikhail5545/media-service-go/internal/handlers/hooks/cloudinary"
 	muxwebhookhandler "github.com/mikhail5545/media-service-go/internal/handlers/hooks/mux"
 	cloudinaryservice "github.com/mikhail5545/media-service-go/internal/services/cloudinary"
 	muxservice "github.com/mikhail5545/media-service-go/internal/services/mux"
@@ -40,22 +41,24 @@ func SetupRouter(e *echo.Echo, muxService muxservice.Service, cldService cloudin
 
 	// --- Webhook handlers ---
 	muxWebhookHandler := muxwebhookhandler.New(muxService)
+	cldWebhookHandler := cldwebhookhandler.New(cldService)
 
 	admin := ver.Group("/admin")
 	{
 		adminMux := admin.Group("/mux")
 		{
 			adminMux.POST("/upload-url", muxAdminHandler.CreateUploadURL)
+			adminMux.POST("/upload-url/unowned", muxAdminHandler.CreateUnownedUploadURL)
 
 			assets := adminMux.Group("/assets")
 			{
 				assets.POST("/associate/:id", muxAdminHandler.Associate)
 				assets.POST("/deassociate/:id", muxAdminHandler.Deassociate)
-				assets.DELETE("/deassociate/:id", muxAdminHandler.DeassociateAndDelete)
 				assets.GET("", muxAdminHandler.List)
 				assets.GET("/unowned", muxAdminHandler.ListUnowned)
 				assets.GET("/deleted", muxAdminHandler.ListDeleted)
 				assets.GET("/:id", muxAdminHandler.Get)
+				assets.PUT("/:id", muxAdminHandler.UpdateOwners)
 				assets.GET("/deleted/:id", muxAdminHandler.GetWithDeleted)
 				assets.DELETE("/:id", muxAdminHandler.Delete)
 				assets.DELETE("/permanent/:id", muxAdminHandler.DeletePermanent)
@@ -69,6 +72,14 @@ func SetupRouter(e *echo.Echo, muxService muxservice.Service, cldService cloudin
 
 			assets := adminCld.Group("/assets")
 			{
+				assets.GET("", cldAdminHandler.List)
+				assets.GET("/deleted", cldAdminHandler.ListDeleted)
+				assets.GET("/unowned", cldAdminHandler.ListUnowned)
+				assets.GET("/:id", cldAdminHandler.Get)
+				assets.GET("/deleted/:id", cldAdminHandler.GetWithDeleted)
+				assets.POST("/associate/:id", cldAdminHandler.Associate)
+				assets.POST("/deassocaite/:id", cldAdminHandler.Deassociate)
+				assets.PUT("/:id", cldAdminHandler.UpdateOwners)
 				assets.DELETE("/:id", cldAdminHandler.Delete)
 				assets.DELETE("/permanent/:id", cldAdminHandler.DeletePermanent)
 				assets.POST("/restore/:id", cldAdminHandler.Restore)
@@ -81,6 +92,11 @@ func SetupRouter(e *echo.Echo, muxService muxservice.Service, cldService cloudin
 		mux := webhooks.Group("/mux")
 		{
 			mux.POST("", muxWebhookHandler.HandleWebhook)
+		}
+
+		cloudinary := webhooks.Group("/cloudinary")
+		{
+			cloudinary.POST("/upload", cldWebhookHandler.UploadWebhook)
 		}
 	}
 }

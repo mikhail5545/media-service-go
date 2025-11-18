@@ -21,14 +21,9 @@ Package cloudinary provides service-layer logic for Cloudinary asset management 
 package cloudinary
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"strings"
 
-	assetownerrepo "github.com/mikhail5545/media-service-go/internal/database/cloudinary/asset_owner"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetownermodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
 	metamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
 	"google.golang.org/grpc/status"
 )
@@ -43,39 +38,6 @@ func handleGRPCError(err error) error {
 	return fmt.Errorf("(gRPC call ended with code %d) %w: %s", st.Code(), st.Err(), st.Message())
 }
 
-func populateOwnersFromContext(customContext map[string]string, assetID string) ([]assetownermodel.AssetOwner, map[string][]string) {
-	var ownersToCreate []assetownermodel.AssetOwner
-	ownersByType := make(map[string][]string)
-	for k, v := range customContext {
-		if strings.HasSuffix(k, "_ids") {
-			ownerType := strings.TrimSuffix(k, "_ids")
-			ids := strings.Split(v, "|")
-			ownersByType[ownerType] = ids
-			for _, ownerID := range ids {
-				if ownerID != "" {
-					ownersToCreate = append(ownersToCreate, assetownermodel.AssetOwner{
-						AssetID:   assetID,
-						OwnerID:   ownerID,
-						OwnerType: ownerType,
-					})
-				}
-			}
-		}
-	}
-	return ownersToCreate, ownersByType
-}
-
-func groupOwnersByType(owners []assetownermodel.AssetOwner) map[string]map[string]struct{} {
-	grouped := make(map[string]map[string]struct{})
-	for _, owner := range owners {
-		if _, ok := grouped[owner.OwnerType]; !ok {
-			grouped[owner.OwnerType] = make(map[string]struct{})
-		}
-		grouped[owner.OwnerType][owner.OwnerID] = struct{}{}
-	}
-	return grouped
-}
-
 func groupOwnersByTypeFromMetadata(owners []metamodel.Owner) map[string]map[string]struct{} {
 	grouped := make(map[string]map[string]struct{})
 	for _, owner := range owners {
@@ -85,53 +47,6 @@ func groupOwnersByTypeFromMetadata(owners []metamodel.Owner) map[string]map[stri
 		grouped[owner.OwnerType][owner.OwnerID] = struct{}{}
 	}
 	return grouped
-}
-
-func calculateNewOwnerState(currentState map[string]map[string]struct{}, resource *assetmodel.Resource) map[string]map[string]struct{} {
-	// Deep copy the current state to avoid modifying the original map
-	newState := make(map[string]map[string]struct{})
-	for ownerType, ids := range currentState {
-		newState[ownerType] = make(map[string]struct{})
-		for id := range ids {
-			newState[ownerType][id] = struct{}{}
-		}
-	}
-
-	// Apply changes from the webhook
-	for _, added := range resource.Added {
-		if strings.HasSuffix(added.Name, "_ids") {
-			ownerType := strings.TrimSuffix(added.Name, "_ids")
-			if _, ok := newState[ownerType]; !ok {
-				newState[ownerType] = make(map[string]struct{})
-			}
-			for id := range strings.SplitSeq(added.Value, "|") {
-				if id != "" {
-					newState[ownerType][id] = struct{}{}
-				}
-			}
-		}
-	}
-
-	for _, removed := range resource.Removed {
-		if strings.HasSuffix(removed.Name, "_ids") {
-			ownerType := strings.TrimSuffix(removed.Name, "_ids")
-			delete(newState, ownerType)
-		}
-	}
-
-	for _, updated := range resource.Updated {
-		if strings.HasSuffix(updated.Name, "_ids") {
-			ownerType := strings.TrimSuffix(updated.Name, "_ids")
-			newState[ownerType] = make(map[string]struct{}) // Clear old value
-			for id := range strings.SplitSeq(updated.NewValue, "|") {
-				if id != "" {
-					newState[ownerType][id] = struct{}{}
-				}
-			}
-		}
-	}
-
-	return newState
 }
 
 func diffOwnerMaps(old, new map[string]map[string]struct{}) (toAdd, toDelete map[string][]string) {
@@ -169,44 +84,6 @@ func diffOwnerMaps(old, new map[string]map[string]struct{}) (toAdd, toDelete map
 	}
 
 	return toAdd, toDelete
-}
-
-func (s *service) processOwnerChanges(ctx context.Context, repo assetownerrepo.Repository, assetID string, toAdd, toDelete map[string][]string) error {
-	var allErrors []error
-
-	// Process Deletions
-	for ownerType, ids := range toDelete {
-		if len(ids) > 0 {
-			if _, err := repo.DeleteByOwnerTypeAndIDs(ctx, assetID, ownerType, ids); err != nil {
-				allErrors = append(allErrors, fmt.Errorf("failed to delete old asset owner links for type %s: %w", ownerType, err))
-			}
-		}
-	}
-
-	// Process Additions
-	if len(toAdd) > 0 {
-		var ownersToCreate []assetownermodel.AssetOwner
-		for ownerType, ids := range toAdd {
-			for _, ownerID := range ids {
-				ownersToCreate = append(ownersToCreate, assetownermodel.AssetOwner{
-					AssetID:   assetID,
-					OwnerID:   ownerID,
-					OwnerType: ownerType,
-				})
-			}
-		}
-		if len(ownersToCreate) > 0 {
-			if err := repo.CreateBatch(ctx, ownersToCreate); err != nil {
-				allErrors = append(allErrors, fmt.Errorf("failed to create new asset owner links: %w", err))
-			}
-		}
-	}
-
-	if len(allErrors) > 0 {
-		return fmt.Errorf("failed to update asset owner links from context change: %w", errors.Join(allErrors...))
-	}
-
-	return nil
 }
 
 // combineAssetAndMetadata is a helper to merge an Asset and its metadata into an AssetResponse DTO.

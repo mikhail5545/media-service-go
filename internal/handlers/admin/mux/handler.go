@@ -59,9 +59,8 @@ func (h *Handler) HandleServiceError(c echo.Context, err error) error {
 	return c.JSON(http.StatusInternalServerError, map[string]any{"error": "Internal server error"})
 }
 
-// CreateUploadURL handles the creation of a new Mux direct upload URL.
-// It expects a JSON body with owner and metadata information. If the owner
-// already has an associated video, it will be de-associated before creating the new one.
+// CreateUploadURL creates upload URL for the direct upload using mux direct upload api. It uses [mux.Client.CreateUploadURL] method
+// to access MUX direct upload API. If an owner already has an association with an asset, an error is returned.
 //
 // Method: POST
 // Path: /admin/mux/upload-url
@@ -75,6 +74,44 @@ func (h *Handler) CreateUploadURL(c echo.Context) error {
 		return h.HandleServiceError(c, err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"url": resp.Data.Url})
+}
+
+// CreateUnownedUploadURL creates an upload URL for a new asset without an initial owner.
+//
+// Method: POST
+// Path: /admin/mux/upload-url/unowned
+func (h *Handler) CreateUnownedUploadURL(c echo.Context) error {
+	var req *assetmodel.CreateUnownedUploadURLRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	resp, err := h.service.CreateUnownedUploadURL(c.Request().Context(), req)
+	if err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"url": resp.Data.Url})
+}
+
+// UpdateOwners processes asset ownership relations changes. It recieves an updated list of asset owners, updates local DB metadata for asset
+// (about it's owners), processes the diff between old and new owners and notifies external services about
+// this ownership changes via gRPC connection.
+//
+// Method: PUT
+// Path: /admin/mux/assets/:id
+func (h *Handler) UpdateOwners(c echo.Context) error {
+	id, err := request.GetIDParam(c, ":id", "Invalid mux asset ID")
+	if err != nil {
+		return err
+	}
+	var req *assetmodel.UpdateOwnersRequest
+	if err := c.Bind(&req); err != nil {
+		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
+	}
+	req.ID = id
+	if err := h.service.UpdateOwners(c.Request().Context(), req); err != nil {
+		return h.HandleServiceError(c, err)
+	}
+	return c.NoContent(http.StatusAccepted)
 }
 
 // Associate handles linking an existing, unowned asset to an owner.
@@ -119,27 +156,6 @@ func (h *Handler) Deassociate(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
-// DeassociateAndDelete handles unlinking an asset from an owner and then soft-deleting the asset.
-// It clears owner information and marks the asset as deleted.
-//
-// Method: DELETE
-// Path: /admin/mux/assets/:id/deassociate
-func (h *Handler) DeassociateAndDelete(c echo.Context) error {
-	id, err := request.GetIDParam(c, ":id", "Invalid mux asset ID")
-	if err != nil {
-		return err
-	}
-	var req *assetmodel.DeassociateRequest
-	if err := c.Bind(&req); err != nil {
-		return h.ServeError(c, http.StatusBadRequest, "Invalid request JSON payload")
-	}
-	req.ID = id
-	if err := h.service.DeassociateAndDelete(c.Request().Context(), req); err != nil {
-		return h.HandleServiceError(c, err)
-	}
-	return c.NoContent(http.StatusNoContent)
-}
-
 // Get handles retrieving a single, non-deleted asset by its ID.
 //
 // Method: GET
@@ -149,11 +165,11 @@ func (h *Handler) Get(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	asset, err := h.service.Get(c.Request().Context(), id)
+	response, err := h.service.Get(c.Request().Context(), id)
 	if err != nil {
 		return h.HandleServiceError(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"asset": asset})
+	return c.JSON(http.StatusOK, map[string]any{"response": response})
 }
 
 // GetWithDeleted handles retrieving a single asset by its ID, including soft-deleted ones.
@@ -165,11 +181,11 @@ func (h *Handler) GetWithDeleted(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	asset, err := h.service.GetWithDeleted(c.Request().Context(), id)
+	response, err := h.service.GetWithDeleted(c.Request().Context(), id)
 	if err != nil {
 		return h.HandleServiceError(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"asset": asset})
+	return c.JSON(http.StatusOK, map[string]any{"response": response})
 }
 
 // List handles retrieving a paginated list of all non-deleted assets.
@@ -182,11 +198,11 @@ func (h *Handler) List(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	assets, total, err := h.service.List(c.Request().Context(), limit, offset)
+	responses, total, err := h.service.List(c.Request().Context(), limit, offset)
 	if err != nil {
 		return h.HandleServiceError(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"assets": assets, "total": total})
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
 }
 
 // ListUnowned handles retrieving a paginated list of all assets that are not associated with an owner.
@@ -199,11 +215,11 @@ func (h *Handler) ListUnowned(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	assets, total, err := h.service.ListUnowned(c.Request().Context(), limit, offset)
+	responses, total, err := h.service.ListUnowned(c.Request().Context(), limit, offset)
 	if err != nil {
 		return h.HandleServiceError(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"assets": assets, "total": total})
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
 }
 
 // ListDeleted handles retrieving a paginated list of all soft-deleted assets.
@@ -216,11 +232,11 @@ func (h *Handler) ListDeleted(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	assets, total, err := h.service.ListDeleted(c.Request().Context(), limit, offset)
+	responses, total, err := h.service.ListDeleted(c.Request().Context(), limit, offset)
 	if err != nil {
 		return h.HandleServiceError(c, err)
 	}
-	return c.JSON(http.StatusOK, map[string]any{"assets": assets, "total": total})
+	return c.JSON(http.StatusOK, map[string]any{"responses": responses, "total": total})
 }
 
 // DeletePermanent handles the permanent deletion of an asset from both the local database

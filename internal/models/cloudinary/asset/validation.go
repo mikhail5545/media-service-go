@@ -171,29 +171,40 @@ func (req CleanupOrphanAssetsRequest) Validate() error {
 	)
 }
 
+// Validate validates fields of [asset.SuccessfulUploadRequest].
+// All request fields except Owners are required for this operation.
+// Validation rules:
+//
+//   - CloudinaryAssetID: required.
+//   - CloudinaryPublicID: required, at least 3 characters, max 255 characters.
+//   - SecureURL: required, valid URL.
+//   - AssetFolder: required, at least 3 characters, max 255 characters.
+//   - DisplayName: required, at least 3 characters, max 255 characters.
+//   - Owners: optional, slice of [metamodel.Owner], if populated, each must have a valid UUID and valid OwnerType.
 func (req SuccessfulUploadRequest) Validate() error {
 	return validation.ValidateStruct(&req,
 		validation.Field(&req.CloudinaryAssetID, validation.Required),
-		validation.Field(&req.CloudinaryPublicID, validation.Required),
+		validation.Field(&req.CloudinaryPublicID, validation.Required, validation.Length(3, 255)),
 		validation.Field(&req.SecureURL, validation.Required, is.URL),
 		validation.Field(&req.AssetFolder, validation.Required, validation.Length(3, 255)),
-		validation.Field(&req.DisplayName, validation.Required),
+		validation.Field(&req.DisplayName, validation.Required, validation.Length(3, 255)),
 		validation.Field(
 			&req.Owners,
-			// Owners can be optional on initial upload
-			validation.Each(
-				validation.By(
-					func(value interface{}) error {
-						if owner, ok := value.(metadata.Owner); ok {
-							if _, err := uuid.Parse(owner.OwnerID); err != nil {
-								return errors.New("must be a valid uuid")
+			validation.When(len(req.Owners) > 0,
+				validation.Each(
+					validation.By(
+						func(value any) error {
+							if owner, ok := value.(metadata.Owner); ok {
+								if _, err := uuid.Parse(owner.OwnerID); err != nil {
+									return errors.New("must be a valid uuid")
+								}
+								if len(owner.OwnerType) <= 3 {
+									return errors.New("must be at least 4 characters long")
+								}
 							}
-							if len(owner.OwnerType) <= 3 {
-								return errors.New("must be at least 4 characters long")
-							}
-						}
-						return nil
-					},
+							return nil
+						},
+					),
 				),
 			),
 		),
