@@ -18,13 +18,11 @@
 package mux
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
 	mux "github.com/muxinc/mux-go/v6"
 )
 
@@ -38,17 +36,13 @@ type MUX interface {
 	CreateUploadURL(creatorID, title string) (*mux.UploadResponse, error)
 	// UpdateMetadata updates mux asset `Meta` object and `Passthrough` string with provided values.
 	// All request values are required for update and previous values will be completely deleted.
-	UpdateMetadata(req *assetmodel.UpdateMetadataRequest) (*mux.AssetResponse, error)
+	UpdateMetadata(id, title, creatorID string) (*mux.AssetResponse, error)
 	// DeleteAsset completely deletes a mux asset. This action is irreversable.
 	DeleteAsset(assetID string) error
 }
 
 type Client struct {
 	client *mux.APIClient
-}
-
-type passthroughStruct struct {
-	OwnerType string `json:"owner_type"`
 }
 
 func NewMUXClient() (MUX, error) {
@@ -118,29 +112,21 @@ func (c *Client) CreateUploadURL(creatorID, title string) (*mux.UploadResponse, 
 
 // UpdateMetadata updates mux asset `Meta` object and `Passthrough` string with provided values.
 // All request values are required for update and previous values will be completely deleted.
-func (c *Client) UpdateMetadata(req *assetmodel.UpdateMetadataRequest) (*mux.AssetResponse, error) {
-	if err := req.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	p := passthroughStruct{OwnerType: req.OwnerType}
-	passthrough, err := json.Marshal(p)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal passthrough: %w", err)
+func (c *Client) UpdateMetadata(id, title, creatorID string) (*mux.AssetResponse, error) {
+	if title == "" || creatorID == "" {
+		return nil, fmt.Errorf("%w: title and creatorID are required", ErrInvalidArgument)
 	}
 
 	meta := mux.AssetMetadata{
-		Title:      req.Title,
-		ExternalId: req.OwnerID,
-		CreatorId:  req.CreatorID,
+		Title:     title,
+		CreatorId: creatorID,
 	}
 
 	updateReq := mux.UpdateAssetRequest{
-		Passthrough: string(passthrough),
-		Meta:        meta,
+		Meta: meta,
 	}
 
-	resp, err := c.client.AssetsApi.UpdateAsset(req.AssetID, updateReq)
+	resp, err := c.client.AssetsApi.UpdateAsset(id, updateReq)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to update asset metadata: %w", ErrAPI, err)
 	}

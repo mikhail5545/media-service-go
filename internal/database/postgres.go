@@ -21,7 +21,6 @@ import (
 	"context"
 
 	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	assetowner "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset_owner"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -32,7 +31,7 @@ func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-	err = db.AutoMigrate(&asset.Asset{}, &assetowner.AssetOwner{})
+	err = db.AutoMigrate(&asset.Asset{})
 	if err != nil {
 		sqlDB, _ := db.DB()
 		sqlDB.Close()
