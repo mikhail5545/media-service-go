@@ -1,0 +1,18 @@
+# Git files
+.git/
+.gitignore
+.github/
+
+# IDE and editor files
+.idea
+.vscode/
+*.iml
+
+# Local env files
+.env
+
+# Go build cache
+/build
+
+# Docs
+/docs

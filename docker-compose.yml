@@ -1,0 +1,55 @@
+version '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: media_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      -postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  arangodb:
+    image: arangodb:3.10
+    container_name: media_arangodb
+    environment:
+      ARANGO_ROOT_PASSWORD: ${ARANGO_ROOT_PASSWORD}
+    ports:
+      - "8529:8529"
+    volumes:
+      - arango_data:/var/lib/arangodb3
+      - arango_apps_data:/var/lib/arangodb3-apps
+    
+  media-service:
+    build: .
+    container_name: media_service
+    ports: 
+      - "8083:8083"
+      - "50053:50053"
+    depends_on: 
+      postgres:
+        condition: service_healthy
+      arangodb:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+      - ARANGO_DB_ENDPOINTS=http://arangodb:8529
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+
+volumes:
+  postgres_data:
+  arango_data:
+  arango_apps_data:

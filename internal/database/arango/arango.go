@@ -30,7 +30,9 @@ func NewArangoDB(ctx context.Context, e []string) (arangodb.Database, error) {
 	// Initialize arangoDB client
 	endpoint := connection.NewRoundRobinEndpoints(e)
 	conn := connection.NewHttp2Connection(connection.DefaultHTTP2ConfigurationWrapper(endpoint, false))
-	auth := connection.NewBasicAuth("root", "password")
+	username := os.Getenv("ARANGODB_USERNAME")
+	password := os.Getenv("ARANGODB_PASSWORD")
+	auth := connection.NewBasicAuth(username, password)
 	if err := conn.SetAuthentication(auth); err != nil {
 		return nil, fmt.Errorf("failed to set up auth for arango db connection: %w", err)
 	}

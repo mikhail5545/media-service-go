@@ -1,0 +1,62 @@
+name: Go CI/CD Pipeline
+
+on:
+    push:
+        branches: ["main", "master"]
+        paths-ignore:
+            -   '**.md'
+            -   'docs/**'
+            -   'LICENSE'
+    pull_request:
+        branches: ["main", "master"]
+        paths-ignore:
+            -   '**.md'
+            -   'docs/**'
+            -   'LICENSE'
+
+jobs:
+    build-and-test:
+        runs-on: ubuntu-latest
+
+        steps:
+            -   name: Checkout code
+                uses: actions/checkout@v4
+                with:
+                    fetch-depth: 0
+                    path: .
+            
+            -   name: Setup Go
+                uses: actions/setup-go@v5
+                with:
+                    go-version: '1.24'
+            
+            -   name: Confirm workspace layout
+                run: |
+                    echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+                    echo "PWD: $(pwd)"
+                    ls -la
+                    echo "Listing top-level files:"
+                    find . -maxdepth 2 -type f -name 'go.mod' -print -o -name '*.go' -print
+                
+            -   name: Cache Go modules
+                uses: actions/cache@v4
+                with:
+                    path: ~/go/pkg/mod
+                    key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+                    restore-keys: ${{ runner.os }}-go-
+
+            -   name: Install dependencies
+                run: go mod download
+
+            -   name: Run Unit Tests, Filter and Collect Coverage
+                run: |
+                    go test -v -covermode=atomic -coverprofile=coverage.tmp ./...
+                    grep -v 'internal/test' coverage.tmp > coverage.out
+                working-directory: ./
+
+            -   name: Pring Coverage Summary
+                uses: actions/upload-artifact@v4
+                with:
+                    name: code-coverage-report
+                    path: coverage.out
+                    retention-days: 10
