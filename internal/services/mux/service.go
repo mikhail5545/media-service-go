@@ -132,6 +132,10 @@ type Service interface {
 	// HandleAssetReadyWebhook processes an incoming Mux webhook with "video.asset.ready" event type, finds the corresponding asset,
 	// and updates it in a patch-like manner.
 	HandleAssetReadyWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error
+	// HandleAssetErroredWebhook processes an incoming Mux webhook with "video.asset.errored" event type, finds the corresponding asset,
+	// and updates it in a patch-like manner. After update, it soft-deleted mux asset. If asset has owners, they will be deassociated and
+	// all asset metadata about it's owners will be cleared.
+	HandleAssetErroredWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error
 }
 
 // service provides service-layer business logic for mux assets.

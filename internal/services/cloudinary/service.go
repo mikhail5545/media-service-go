@@ -141,15 +141,16 @@ type service struct {
 	Client         cloudinary.Cloudinary
 	Repo           assetrepo.Repository
 	metaRepo       metarepo.Repository
-	ImageSvcClient imageclient.Client
+	ImageSvcClient imageclient.Service
 }
 
 // New creates a new Service instance using provided cloudinary API client, asset and asset owner repositories.
-func New(cnt cloudinary.Cloudinary, repo assetrepo.Repository, mr metarepo.Repository) Service {
+func New(cnt cloudinary.Cloudinary, repo assetrepo.Repository, mr metarepo.Repository, img imageclient.Service) Service {
 	return &service{
-		Client:   cnt,
-		Repo:     repo,
-		metaRepo: mr,
+		Client:         cnt,
+		Repo:           repo,
+		metaRepo:       mr,
+		ImageSvcClient: img,
 	}
 }
 

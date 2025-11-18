@@ -59,6 +59,7 @@ func (h *Handler) HandleWebhook(c echo.Context) error {
 	case "video.asset.ready":
 		webhookErr = h.service.HandleAssetReadyWebhook(c.Request().Context(), payload)
 	case "video.asset.errored":
+		webhookErr = h.service.HandleAssetErroredWebhook(c.Request().Context(), payload)
 	case "video.asset.updated":
 	case "video.asset.deleted":
 	}

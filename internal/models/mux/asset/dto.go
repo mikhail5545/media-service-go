@@ -65,6 +65,11 @@ type DeassociateRequest struct {
 	OwnerType string `json:"owner_type"`
 }
 
+type UpdateMetadataRequest struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
 // MuxWebhook represents the mux webhook payload.
 // See mux API [webhook reference] for more details.
 //
