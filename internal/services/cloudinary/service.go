@@ -1,717 +1,452 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 /*
-Package cloudinary provides service-layer logic for Cloudinary asset management and asset models.
-*/
+ * Copyright (c) 2026. Mikhail Kulik.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package cloudinary
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/mikhail5545/media-service-go/internal/clients/cloudinary"
-	metarepo "github.com/mikhail5545/media-service-go/internal/database/arango/cloudinary/metadata"
-	assetrepo "github.com/mikhail5545/media-service-go/internal/database/cloudinary/asset"
+	apiclient "github.com/mikhail5545/media-service-go/internal/apiclients/cloudinary"
+	metadatarepo "github.com/mikhail5545/media-service-go/internal/database/mongo/cloudinary/metadata"
+	assetrepo "github.com/mikhail5545/media-service-go/internal/database/postgres/cloudinary/asset"
+	"github.com/mikhail5545/media-service-go/internal/database/types"
+	serviceerrors "github.com/mikhail5545/media-service-go/internal/errors"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
-	metamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
-	imageclient "github.com/mikhail5545/product-service-go/pkg/client/image"
-	imagepb "github.com/mikhail5545/proto-go/proto/product_service/image/v0"
+	metadatamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
+	bytesutil "github.com/mikhail5545/media-service-go/internal/util/bytes"
+	"github.com/mikhail5545/media-service-go/internal/util/parsing"
+	"github.com/mikhail5545/product-service-client/client"
+	imagepbv1 "github.com/mikhail5545/product-service-client/pb/proto/product_service/image/v1"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-// Service provides service-layer logic for Cloudinary asset management and asset models.
-type Service interface {
-	// Get retrieves a single not soft-deleted asset record from the database along with it's metadata.
+type AssetService interface {
+	// Get retrieves an active asset based on the provided filter.
+	Get(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// GetWithArchived retrieves an asset that can be either active or archived based on the provided filter.
+	GetWithArchived(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// GetWithBroken retrieves an asset that can be active, archived, or broken based on the provided filter.
+	GetWithBroken(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// List retrieves a list of active assets based on the provided request.
+	List(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// ListArchived retrieves a list of archived assets based on the provided request.
+	ListArchived(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// ListBroken retrieves a list of broken assets based on the provided request.
+	ListBroken(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// CreateSignedUploadURL generates a signed URL for uploading an asset to Cloudinary.
+	// It returns the signed parameters required for the upload, end client must build signed upload
+	// URL using generated parameters.
+	CreateSignedUploadURL(ctx context.Context, req *assetmodel.CreateSignedUploadURLRequest) (*assetmodel.GeneratedSignedParams, error)
+	// SuccessfulUpload handles the successful upload notification about successful asset upload. End client
+	// must call this method after receiving upload success response from Cloudinary.
+	// It creates a new asset record in the database with the provided details.
+	SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error)
+	// Archive marks an asset as archived.
+	// Note that only assets without any owners can be archived.
+	Archive(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// MarkAsBroken marks an asset as broken.
+	// If the asset has owners, it notifies the product-service about the broken asset via [gRPC client].
 	//
-	// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Get(ctx context.Context, id string) (*assetmodel.AssetResponse, error)
-	// GetWithDeleted retrieves a single asset record from the database along with it's metadata, including soft-deleted ones.
-	//
-	// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-	// or a database/internal error occurs.
-	GetWithDeleted(ctx context.Context, id string) (*assetmodel.AssetResponse, error)
-	// List retrieves a paginated list of all not soft-deleted asset records along with their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	List(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// ListUnowned retrieves a paginated list of all unowned asset records along with their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	ListUnowned(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// ListDeleted retrieves a paginated list of all soft-deleted asset records along with their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	ListDeleted(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// CreateSignedUploadURL creates a signature for a direct frontend upload.
-	// Direct upload url should be constructed using this params, this function only creates
-	// signature for signed upload.
-	//
-	// Returns a map representation of upload params used during signature creation along with the signature itself.
-	// Example: {"signature": "generated_signature", public_id: "asset_public_id", "timestamp": "unix_time", "api_key": "cloudinary_api_key"}.
-	// Returns an error if request is invalid (http.StatusBadRequest) or internal error occures (http.StatusInternalServerError).
-	CreateSignedUploadURL(ctx context.Context, req *assetmodel.CreateSignedUploadURLRequest) (map[string]string, error)
-	// UpdateOwners processes asset ownership relations changes.
-	// It recieves an updated list of asset owners, updates local DB metadata for asset (about it's owners),
-	// processes the diff between old and new owners and notifies external services about this ownership
-	// changes via gRPC connection.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), asset is not found (ErrNotFound),
-	// or a database/internal error occures.
-	UpdateOwners(ctx context.Context, req *assetmodel.UpdateOwnersRequest) error
-	// Associate links an existing asset to an owner.
-	// It also updates asset medatada.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Associate(ctx context.Context, req *assetmodel.AssociateRequest) error
-	// Deassociate removes the link between an asset and an owner.
-	// It also deletes owner from asset metadata.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Deassociate(ctx context.Context, req *assetmodel.DeassociateRequest) error
-	// SuccessfulUpload creates a new asset with provided information and creates owner relations for it.
-	// It saves asset metadata about owner relations in the local noSQL db and notifies external services about
-	// ownership changes via gRPC connection. This method should be called after successful cloudinary image upload.
-	//
-	// Returns newly created asset.
-	// Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-	SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.AssetResponse, error)
-	// CleanupOrphanAssets finds and deletes assets that exist in Cloudinary but not in the local database.
-	//
-	// Returns the number of cleaned assets.
-	// Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-	CleanupOrphanAssets(ctx context.Context, req *assetmodel.CleanupOrphanAssetsRequest) (int, error)
-	// Delete performs a soft-delete of an asset. It does not delete Cloudinary asset.
-	// If assset has owners, it will be deassociated from them first.
-	//
-	// Returns an error if the ID is not a valid UUID (ErrInvalidArgument), asset not found (ErrNotFound)
-	// or detabase/internal error occurs.
-	Delete(ctx context.Context, assetID string) error
-	// DeletePermanent performs a complete delete of an asset. It also deletes Cloudinary asset.
-	// By this time, asset shouldn't have any owners. They should be deleted when asset is being soft-deleted.
-	// This action is irreversable.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), asset not found (ErrNotFound),
-	// or detabase/internal error occurs.
-	DeletePermanent(ctx context.Context, req *assetmodel.DestroyAssetRequest) error
-	// Restore performs a restore of an asset.
-	//
-	// Returns an error if the ID is not a valid UUID (ErrInvalidArgument), asset not found (ErrNotFound)
-	// or detabase/internal error occurs.
-	Restore(ctx context.Context, assetID string) error
-	// HandleUploadWebhook processes an incoming Cloudinary upload webhook, finds the corresponding asset,
-	// and updates it in a patch-like manner.
-	HandleUploadWebhook(ctx context.Context, payload []byte, recievedTimestamp, recievedSignature string) error
+	// [gRPC client]: https://github.com/mikhail5545/product-service-client
+	MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// AddOwner associates an external owner with an asset.
+	// It updates the asset metadata in MongoDB to include the new owner.
+	// Broken or archived assets cannot have owners added.
+	AddOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error
+	// RemoveOwner disassociates an external owner from an asset.
+	// It updates the asset metadata in MongoDB to remove the specified owner.
+	RemoveOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error
+	// Restore restores an archived asset back to active status.
+	// Only archived assets can be restored.
+	Restore(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// Delete permanently deletes an archived asset along with its metadata.
+	// It also deletes the asset from Cloudinary.
+	// Note that only currently soft-deleted (archived) assets can be permanently deleted.
+	Delete(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// HandleUploadWebhook processes incoming webhook notifications from Cloudinary regarding asset uploads.
+	// It verifies the webhook signature and updates the asset status accordingly.
+	HandleUploadWebhook(ctx context.Context, payload []byte, timestamp, signature string) error
 }
 
-// Service provides service-layer logic for Cloudinary asset management and asset models.
-// It holds an instance of cloudinary API client to perform external API operations and
-// instances of [assetrepo.Repository] to perform database operations.
-type service struct {
-	Client         cloudinary.Cloudinary
-	Repo           assetrepo.Repository
-	metaRepo       metarepo.Repository
-	ImageSvcClient imageclient.Service
+type Service struct {
+	repo               *assetrepo.Repository
+	metadataRepo       *metadatarepo.Repository
+	imageServiceClient *client.ImageServiceClient
+	apiClient          *apiclient.Client
+	logger             *zap.Logger
 }
 
-// New creates a new Service instance using provided cloudinary API client, asset and asset owner repositories.
-func New(cnt cloudinary.Cloudinary, repo assetrepo.Repository, mr metarepo.Repository, img imageclient.Service) Service {
-	return &service{
-		Client:         cnt,
-		Repo:           repo,
-		metaRepo:       mr,
-		ImageSvcClient: img,
+var _ AssetService = (*Service)(nil)
+
+type NewParams struct {
+	Repo               *assetrepo.Repository
+	MetadataRepo       *metadatarepo.Repository
+	ImageServiceClient *client.ImageServiceClient
+	ApiClient          *apiclient.Client
+}
+
+func New(params *NewParams, logger *zap.Logger) *Service {
+	return &Service{
+		repo:               params.Repo,
+		metadataRepo:       params.MetadataRepo,
+		imageServiceClient: params.ImageServiceClient,
+		apiClient:          params.ApiClient,
+		logger:             logger.With(zap.String("layer", "service"), zap.String("service", "Cloudinary")),
 	}
 }
 
-// Get retrieves a single not soft-deleted asset record from the database along with it's metadata.
-//
-// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Get(ctx context.Context, id string) (*assetmodel.AssetResponse, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	asset, err := s.Repo.Get(ctx, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil, fmt.Errorf("failed to retrieve asset: %w", err)
-	}
-
-	metadata, err := s.metaRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
-	}
-
-	response := s.combineAssetAndMetadata(asset, metadata)
-
-	return response, nil
-}
-
-// GetWithDeleted retrieves a single asset record from the database along with it's metadata, including soft-deleted ones.
-//
-// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) GetWithDeleted(ctx context.Context, id string) (*assetmodel.AssetResponse, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	asset, err := s.Repo.GetWithDeleted(ctx, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil, fmt.Errorf("failed to retrieve asset: %w", err)
-	}
-
-	metadata, err := s.metaRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
-	}
-
-	response := s.combineAssetAndMetadata(asset, metadata)
-
-	return response, nil
-}
-
-// List retrieves a paginated list of all not soft-deleted asset records along with their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) List(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	if limit < -1 || offset < 0 {
-		return nil, 0, fmt.Errorf("%w: limit cannot be less then -1, offset cannot be less then 0", ErrInvalidArgument)
-	}
-
-	assets, err := s.Repo.List(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve assets: %w", err)
-	}
-	if len(assets) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	total, err := s.Repo.Count(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count assets: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i, asset := range assets {
-		assetIDs[i] = asset.ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
-	}
-
-	return responses, total, nil
-}
-
-// ListUnowned retrieves a paginated list of all unowned asset records along with their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) ListUnowned(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	if limit < -1 || offset < 0 {
-		return nil, 0, fmt.Errorf("%w: limit cannot be less then -1, offset cannot be less then 0", ErrInvalidArgument)
-	}
-
-	unownedIDs, err := s.metaRepo.ListUnownedIDs(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve unowned asset IDs: %w", err)
-	}
-	if len(unownedIDs) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	assets, err := s.Repo.ListByIDs(ctx, limit, offset, unownedIDs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve unowned assets by IDs: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i := range assets {
-		assetIDs[i] = assets[i].ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
-	}
-
-	return responses, int64(len(unownedIDs)), nil
-}
-
-// ListDeleted retrieves a paginated list of all soft-deleted asset records along with their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) ListDeleted(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	if limit < -1 || offset < 0 {
-		return nil, 0, fmt.Errorf("%w: limit cannot be less then -1, offset cannot be less then 0", ErrInvalidArgument)
-	}
-
-	assets, err := s.Repo.ListDeleted(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve assets: %w", err)
-	}
-	if len(assets) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	total, err := s.Repo.CountDeleted(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count assets: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i, asset := range assets {
-		assetIDs[i] = asset.ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID])
-	}
-
-	return responses, total, nil
-}
-
-// Delete performs a soft-delete of an asset. It does not delete Cloudinary asset.
-// If assset has owners, it will be deassociated from them first.
-//
-// Returns an error if the ID is not a valid UUID (ErrInvalidArgument), asset not found (ErrNotFound)
-// or detabase/internal error occurs.
-func (s *service) Delete(ctx context.Context, assetID string) error {
-	if _, err := uuid.Parse(assetID); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-
-		asset, err := txRepo.Get(ctx, assetID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
-		}
-
-		meta, err := s.metaRepo.Get(ctx, asset.ID)
-		if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
-		}
-
-		// If asset has owners, de-associate them
-		if meta != nil && len(meta.Owners) > 0 {
-			toDelete := make(map[string][]string)
-			for _, owner := range meta.Owners {
-				toDelete[owner.OwnerType] = append(toDelete[owner.OwnerType], owner.OwnerID)
-			}
-
-			if err := s.processChanges(ctx, asset, nil, toDelete); err != nil {
-				return fmt.Errorf("failed to notify external services about changes: %w", err)
-			}
-
-			if err := s.metaRepo.DeleteOwners(ctx, asset.ID); err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-				return fmt.Errorf("failed to delete asset owners metadata: %w", err)
-			}
-		}
-
-		_, err = txRepo.Delete(ctx, assetID)
-		return err
+// Get retrieves an active asset based on the provided filter.
+func (s *Service) Get(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
 	})
 }
 
-// DeletePermanent performs a complete delete of an asset. It also deletes Cloudinary asset.
-// By this time, asset shouldn't have any owners. They should be deleted when asset is being soft-deleted.
-// This action is irreversable.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), asset not found (ErrNotFound),
-// or detabase/internal error occurs.
-func (s *service) DeletePermanent(ctx context.Context, req *assetmodel.DestroyAssetRequest) error {
+// GetWithArchived retrieves an asset that can be either active or archived based on the provided filter.
+func (s *Service) GetWithArchived(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+		assetrepo.ScopeArchived,
+	})
+}
+
+// GetWithBroken retrieves an asset that can be active, archived, or broken based on the provided filter.
+func (s *Service) GetWithBroken(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+		assetrepo.ScopeArchived,
+		assetrepo.ScopeBroken,
+	})
+}
+
+// List retrieves a list of active assets based on the provided request.
+func (s *Service) List(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+	})
+}
+
+// ListArchived retrieves a list of archived assets based on the provided request.
+func (s *Service) ListArchived(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeArchived,
+	})
+}
+
+// ListBroken retrieves a list of broken assets based on the provided request.
+func (s *Service) ListBroken(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeBroken,
+	})
+}
+
+// CreateSignedUploadURL generates a signed URL for uploading an asset to Cloudinary.
+// It returns the signed parameters required for the upload, end client must build signed upload
+// URL using generated parameters.
+func (s *Service) CreateSignedUploadURL(ctx context.Context, req *assetmodel.CreateSignedUploadURLRequest) (*assetmodel.GeneratedSignedParams, error) {
 	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return nil, serviceerrors.NewValidationFailedError(err)
 	}
-
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-
-		asset, err := txRepo.Get(ctx, req.ID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
-		}
-
-		if _, err := txRepo.DeletePermanent(ctx, req.ID); err != nil {
-			return fmt.Errorf("failed to delete asset: %w", err)
-		}
-
-		if err := s.Client.DeleteAsset(ctx, asset.CloudinaryPublicID, req.ResourceType); err != nil {
-			return fmt.Errorf("failed to delete cloudinary asset: %w", err)
-		}
-		return nil
-	})
-}
-
-// Restore performs a restore of an asset.
-//
-// Returns an error if the ID is not a valid UUID (ErrInvalidArgument), asset not found (ErrNotFound)
-// or detabase/internal error occurs.
-func (s *service) Restore(ctx context.Context, assetID string) error {
-	if _, err := uuid.Parse(assetID); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-		ra, err := txRepo.Restore(ctx, assetID)
-		if err != nil {
-			return fmt.Errorf("failed to restore asset: %w", err)
-		}
-		if ra == 0 {
-			return fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil
-	})
-}
-
-// CreateSignedUploadURL creates a signature for a direct frontend upload.
-// Direct upload url should be constructed using this params, this function only creates
-// signature for signed upload.
-//
-// Returns a map representation of upload params used during signature creation along with the signature itself.
-// Example: {"signature": "generated_signature", public_id: "asset_public_id", "timestamp": "unix_time", "api_key": "cloudinary_api_key"}.
-// Returns an error if request is invalid (cloudinary.ErrInvalidArgument), Cloudinary API error occures (cloudinary.ErrCloudinaryAPI)
-// or internal error occures.
-func (s *service) CreateSignedUploadURL(ctx context.Context, req *assetmodel.CreateSignedUploadURLRequest) (map[string]string, error) {
-	signedParams := make(map[string]string)
-
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	params := make(url.Values)
+
 	if req.Eager != nil {
 		params.Set("eager", *req.Eager)
-		signedParams["eager"] = *req.Eager
 	}
-	params.Set("public_id", req.PublicID)
 	params.Set("timestamp", timestamp)
-	signature, err := s.Client.SignUploadParams(ctx, params)
+	params.Set("public_id", req.PublicID)
+
+	signature, err := s.apiClient.SignUploadParams(ctx, params)
+	if err != nil {
+		s.logger.Error("failed to sign upload params",
+			zap.String("timestamp", timestamp),
+			zap.String("public_id", req.PublicID),
+			zap.Error(err),
+		)
+		return nil, fmt.Errorf("failed to sign upload params: %w", err)
+	}
+
+	return &assetmodel.GeneratedSignedParams{
+		Signature: signature,
+		ApiKey:    s.apiClient.GetApiKey(),
+		PublicID:  req.PublicID,
+		Timestamp: timestamp,
+		Eager:     req.Eager,
+	}, nil
+}
+
+// SuccessfulUpload handles the successful upload notification about successful asset upload. End client
+// must call this method after receiving upload success response from Cloudinary.
+// It creates a new asset record in the database with the provided details.
+func (s *Service) SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error) {
+	if err := req.Validate(); err != nil {
+		return nil, serviceerrors.NewValidationFailedError(err)
+	}
+
+	var newAsset *assetmodel.Asset
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		newAsset = &assetmodel.Asset{
+			CloudinaryAssetID:  req.CloudinaryAssetID,
+			CloudinaryPublicID: req.CloudinaryPublicID,
+			ResourceType:       req.ResourceType,
+			Format:             req.Format,
+			Width:              req.Width,
+			Height:             req.Height,
+			URL:                req.URL,
+			SecureURL:          req.SecureURL,
+			AssetFolder:        req.AssetFolder,
+			DisplayName:        req.DisplayName,
+			Status:             assetmodel.StatusActive,
+		}
+
+		if err := txRepo.Create(ctx, newAsset); err != nil {
+			return fmt.Errorf("failed to create new asset: %w", err)
+		}
+
+		metadata := &metadatamodel.AssetMetadata{
+			Key:    newAsset.ID.String(),
+			Owners: []metadatamodel.Owner{}, // No owners by default
+		}
+		if err := s.metadataRepo.Create(ctx, metadata); err != nil {
+			s.logger.Error("failed to create asset metadata after successful upload",
+				zap.Error(err), zap.String("asset_id", newAsset.ID.String()))
+			return fmt.Errorf("failed to create asset metadata after successful upload: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	apiKey := s.Client.GetApiKey()
-
-	signedParams["signature"] = signature
-	signedParams["public_id"] = req.PublicID
-	signedParams["timestamp"] = timestamp
-	signedParams["api_key"] = apiKey
-	return signedParams, nil
+	return newAsset, nil
 }
 
-// UpdateOwners processes asset ownership relations changes.
-// It recieves an updated list of asset owners, updates local DB metadata for asset (about it's owners),
-// processes the diff between old and new owners and notifies external services about this ownership
-// changes via gRPC connection.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), asset is not found (ErrNotFound),
-// or a database/internal error occures.
-func (s *service) UpdateOwners(ctx context.Context, req *assetmodel.UpdateOwnersRequest) error {
+// Archive marks an asset as archived.
+// Note that only assets without any owners can be archived.
+func (s *Service) Archive(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	// Check if asset exists in Postgres
-	asset, err := s.Repo.Get(ctx, req.ID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w: %w", ErrNotFound, err)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("failed to retrieve asset: %w", err)
-	}
+		if asset.Status == assetmodel.StatusArchived {
+			return serviceerrors.NewConflictError("asset is already archived")
+		}
 
-	// Get current owners from ArangoDB
-	currentMetadata, err := s.metaRepo.Get(ctx, asset.ID)
-	var currentOwners []metamodel.Owner
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return fmt.Errorf("failed to get asset owners metadata: %w", err)
-	} else if errors.Is(err, metarepo.ErrNotFound) {
-		// Not found is a valid case, it just means there are no owners yet.
-	} else if currentMetadata != nil {
-		currentOwners = currentMetadata.Owners
-	}
+		metadata, err := s.getAssetMetadata(ctx, asset.ID)
+		if err != nil {
+			return err
+		}
 
-	currentOwnerMap := groupOwnersByTypeFromMetadata(currentOwners)
-	newOwnerMap := groupOwnersByTypeFromMetadata(req.Owners)
+		if len(metadata.Owners) == 0 {
+			return nil
+		}
 
-	// Calculate what to add and what to delete
-	toAdd, toDelete := diffOwnerMaps(currentOwnerMap, newOwnerMap)
-
-	// Update assest metadata (owners) in ArangoDB
-	if err := s.metaRepo.UpdateOwners(ctx, asset.ID, req.Owners); err != nil {
-		return fmt.Errorf("failed to update asset metadata in ArangoDB: %w", err)
-	}
-
-	// After successful DB update, notify other services via gRPC
-	if err := s.processChanges(ctx, asset, toAdd, toDelete); err != nil {
-		return fmt.Errorf("failed to notify external services: %w", err)
-	}
-	return nil
+		return s.grpcRemoveAssociations(ctx, asset, metadata)
+	})
 }
 
-// Associate links an existing asset to an owner.
-// It also updates asset medatada.
+// MarkAsBroken marks an asset as broken.
+// If the asset has owners, it notifies the product-service about the broken asset via [gRPC client].
 //
-// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Associate(ctx context.Context, req *assetmodel.AssociateRequest) error {
+// [gRPC client]: https://github.com/mikhail5545/product-service-client
+func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-		asset, err := txRepo.Get(ctx, req.ID)
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
+			return err
+		}
+		if asset.Status == assetmodel.StatusBroken {
+			return serviceerrors.NewConflictError("asset is already marked as broken")
 		}
 
-		// Retrieve asset metadata from ArangoDB
-		currentMetadata, err := s.metaRepo.Get(ctx, asset.ID)
+		metadata, err := s.getAssetMetadata(ctx, asset.ID)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
+			return err
 		}
 
-		var newOwners []metamodel.Owner
-		newOwners = append(newOwners, currentMetadata.Owners...)
-		newOwners = append(newOwners, metamodel.Owner{
+		assetIDBytes, err := bytesutil.UUIDToBytes(&asset.ID)
+		if err != nil {
+			return err
+		}
+		if len(metadata.Owners) == 0 {
+			return nil
+		}
+		if _, err := s.imageServiceClient.BrokenImage(ctx, &imagepbv1.BrokenImageRequest{
+			MediaServiceUuid: assetIDBytes,
+		}); err != nil {
+			s.logger.Error("failed to mark image as broken in image service", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to mark image as broken in image service: %w", err)
+		}
+		metadata.Owners = []metadatamodel.Owner{}
+		return s.metadataRepo.Update(ctx, metadata.Key, metadata)
+	})
+}
+
+// AddOwner associates an external owner with an asset.
+// It updates the asset metadata in MongoDB to include the new owner.
+// Broken or archived assets cannot have owners added.
+func (s *Service) AddOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
+		if err != nil {
+			return err
+		}
+		if asset.Status == assetmodel.StatusArchived || asset.Status == assetmodel.StatusBroken {
+			return serviceerrors.NewConflictError("cannot add owner to archived or broken asset")
+		}
+
+		return s.addOwner(ctx, asset.ID, req)
+	})
+}
+
+// RemoveOwner disassociates an external owner from an asset.
+// It updates the asset metadata in MongoDB to remove the specified owner.
+func (s *Service) RemoveOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
+		if err != nil {
+			return err
+		}
+
+		toRemove := metadatamodel.Owner{
 			OwnerID:   req.OwnerID,
 			OwnerType: req.OwnerType,
-		})
-
-		if err := s.metaRepo.UpdateOwners(ctx, asset.ID, newOwners); err != nil {
-			return fmt.Errorf("failed to update asset metadata: %w", err)
 		}
-
-		// Associate owner with the asset
-		if _, err := s.ImageSvcClient.Add(ctx, &imagepb.AddRequest{
-			PublicId:       asset.CloudinaryPublicID,
-			Url:            asset.URL,
-			SecureUrl:      asset.SecureURL,
-			MediaServiceId: asset.ID,
-			OwnerId:        req.OwnerID,
-			OwnerType:      req.OwnerType,
-		}); err != nil {
-			return handleGRPCError(err)
+		metadata, err := s.metadataRepo.GetByOwner(ctx, asset.ID.String(), &toRemove)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return serviceerrors.NewNotFoundError(err)
+			}
+			s.logger.Error("failed to retrieve asset metadata for removing owner",
+				zap.Error(err), zap.String("owner_id", req.OwnerID), zap.String("owner_type", req.OwnerType),
+			)
+			return fmt.Errorf("failed to retrieve asset metadata for removing owner: %w", err)
 		}
-		return nil
+		return s.removeOwner(ctx, metadata, req)
 	})
 }
 
-// Deassociate removes the link between an asset and an owner.
-// It also deletes owner from asset metadata.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Deassociate(ctx context.Context, req *assetmodel.DeassociateRequest) error {
+// Restore restores an archived asset back to active status.
+// Only archived assets can be restored.
+func (s *Service) Restore(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-		// Ensure asset exists
-		_, err := txRepo.Get(ctx, req.ID)
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
+			return err
+		}
+		if asset.Status != assetmodel.StatusArchived {
+			return serviceerrors.NewConflictError("asset is not archived")
 		}
 
-		// Get current owners
-		currentMetadata, err := s.metaRepo.Get(ctx, req.ID)
+		adminID, err := parsing.StrToUUID(req.AdminID)
 		if err != nil {
-			if errors.Is(err, metarepo.ErrNotFound) {
-				// Asset has no owners, nothing to deassociate.
-				return nil
-			}
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
+			return err
 		}
-
-		// Remove the specified owner from the list
-		var newOwners []metamodel.Owner
-		for _, owner := range currentMetadata.Owners {
-			if owner.OwnerID == req.OwnerID && owner.OwnerType == req.OwnerType {
-				continue // Skip the owner to be removed
-			}
-			newOwners = append(newOwners, owner)
-		}
-
-		// Update metadata in ArangoDB
-		if err := s.metaRepo.UpdateOwners(ctx, req.ID, newOwners); err != nil {
-			return fmt.Errorf("failed to update asset metadata: %w", err)
-		}
-
-		// Notify other services
-		if _, err := s.ImageSvcClient.Delete(ctx, &imagepb.DeleteRequest{
-			MediaServiceId: req.ID,
-			OwnerId:        req.OwnerID,
-			OwnerType:      req.OwnerType,
+		if _, err := txRepo.Restore(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}, &types.AuditTrailOptions{
+			AdminID:   adminID,
+			AdminName: req.AdminName,
+			Note:      req.Note,
 		}); err != nil {
-			return handleGRPCError(err)
+			s.logger.Error("failed to restore archived asset", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to restore archived asset: %w", err)
 		}
 
 		return nil
 	})
 }
 
-// SuccessfulUpload creates a new asset with provided information and creates owner relations for it.
-// It saves asset metadata about owner relations in the local noSQL db and notifies external services about
-// ownership changes via gRPC connection. This method should be called after successful cloudinary image upload.
-//
-// Returns newly created asset.
-// Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-func (s *service) SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.AssetResponse, error) {
+// Delete permanently deletes an archived asset along with its metadata.
+// It also deletes the asset from Cloudinary.
+// Note that only currently soft-deleted (archived) assets can be permanently deleted.
+func (s *Service) Delete(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	newAsset := &assetmodel.Asset{
-		ID:                 uuid.New().String(),
-		CloudinaryAssetID:  req.CloudinaryAssetID,
-		CloudinaryPublicID: req.CloudinaryPublicID,
-		ResourceType:       req.ResourceType,
-		Format:             req.Format,
-		Width:              req.Width,
-		Height:             req.Height,
-		URL:                req.URL,
-		SecureURL:          req.SecureURL,
-		AssetFolder:        req.AssetFolder,
-		DisplayName:        req.DisplayName,
-	}
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-	if err := s.Repo.Create(ctx, newAsset); err != nil {
-		return nil, fmt.Errorf("failed to create asset record: %w", err)
-	}
-
-	// Asset may be created without owners initially.
-	if len(req.Owners) > 0 {
-		if err := s.metaRepo.UpdateOwners(ctx, newAsset.ID, req.Owners); err != nil {
-			return nil, fmt.Errorf("failed to create asset owners metadata: %w", err)
+		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status", "cloudinary_public_id", "recourse_type"})
+		if err != nil {
+			return err
 		}
-	}
-
-	toAdd := make(map[string][]string)
-	for _, owner := range req.Owners {
-		toAdd[owner.OwnerType] = append(toAdd[owner.OwnerType], owner.OwnerID)
-	}
-
-	if err := s.processChanges(ctx, newAsset, toAdd, nil); err != nil {
-		return nil, fmt.Errorf("failed to notify external services: %w", err)
-	}
-
-	response := s.combineAssetAndMetadata(newAsset, &metamodel.AssetMetadata{Key: newAsset.ID, Owners: req.Owners})
-
-	return response, nil
-}
-
-// CleanupOrphanAssets finds and deletes assets that exist in Cloudinary but not in the local database.
-//
-// Returns the number of cleaned assets.
-// Returns an error if the request payload is invalid (ErrInvalidArgument) or a database/internal error occures.
-func (s *service) CleanupOrphanAssets(ctx context.Context, req *assetmodel.CleanupOrphanAssetsRequest) (int, error) {
-	if err := req.Validate(); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	cldAssets, err := s.Client.ListAssetsByFolder(ctx, req.Folder)
-	if err != nil {
-		return 0, err
-	}
-
-	localAssetIDs, err := s.Repo.ListAllCloudinaryAssetIDs(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("failed to list assets from database: %w", err)
-	}
-
-	var orphansToDelete []string
-	for _, asset := range cldAssets {
-		if _, exists := localAssetIDs[asset.AssetID]; !exists { // If asset not exists
-			orphansToDelete = append(orphansToDelete, asset.PublicID)
+		if asset.Status != assetmodel.StatusArchived {
+			return serviceerrors.NewConflictError("only archived assets can be deleted")
 		}
-	}
 
-	if len(orphansToDelete) == 0 {
-		log.Println("Orphan asset cleanup: No orphan assets found.")
-		return 0, nil
-	}
+		// Clear asset metadata from MongoDB
+		if err := s.deleteMetadata(ctx, asset.ID); err != nil {
+			return err
+		}
 
-	log.Printf("Orphan asset cleanup: Found %d orphan(s) to delete.", len(orphansToDelete))
+		if asset.CloudinaryPublicID != "" {
+			// Delete asset from Cloudinary
+			if err := s.apiClient.DeleteAsset(ctx, asset.CloudinaryPublicID, asset.ResourceType); err != nil {
+				s.logger.Error("failed to delete asset from Cloudinary", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+				return fmt.Errorf("failed to delete asset from Cloudinary: %w", err)
+			}
+		}
 
-	if err := s.Client.DeleteAssets(ctx, "image", orphansToDelete); err != nil {
-		return 0, fmt.Errorf("failed to delete assets: %w", err)
-	}
-	return len(orphansToDelete), nil
+		// Delete asset record from Postgres
+		if _, err := txRepo.Delete(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}); err != nil {
+			s.logger.Error("failed to delete asset record from Postgres", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to delete asset record from Postgres: %w", err)
+		}
+
+		return nil
+	})
 }

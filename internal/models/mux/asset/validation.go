@@ -18,157 +18,103 @@
 package asset
 
 import (
-	"errors"
+	"reflect"
+	"sync"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
-	"github.com/google/uuid"
-	metamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
+	"github.com/mikhail5545/media-service-go/internal/util/formatting"
+	"github.com/mikhail5545/media-service-go/internal/util/parsing"
+	validationutil "github.com/mikhail5545/media-service-go/internal/util/validation"
 )
 
-// Validate validates fields of [asset.CreateUploadURLRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - OwnerID: required, valid UUID.
-//   - CreatorID: required, valid UUID.
-//   - OwnerType: required, min 3 characters, max 128 characters, one of: ["course_part"].
-//   - Title: required, min 3 characters, max 512 characters.
+func (req GetFilter) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+	)
+}
+
+func (req ListRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.IDs, validationutil.UUIDRule(false)...),
+		validation.Field(&req.MuxUploadIDs, validation.Length(1, 255)),
+		validation.Field(&req.MuxAssetIDs, validation.Length(1, 255)),
+		validation.Field(&req.AspectRatios, validation.Each(validation.Length(1, 64), validation.In("16:9", "4:3", "1:1", "21:9", "3:2"))),
+		validation.Field(&req.ResolutionTiers, validation.Each(validation.Length(1, 64), validation.In("audio-only", "720p", "1080p", "1440p", "2160p"))),
+		validation.Field(&req.IngestTypes, validation.Each(validation.Length(1, 64), validation.In(
+			IngestTypeOnDemandDirectUpload,
+			IngestTypeLiveRTMP,
+			IngestTypeOnDemandClip,
+			IngestTypeLiveSRT,
+			IngestTypeOnDemandURL,
+		))),
+		validation.Field(&req.OrderBy, validation.In(OrderCreatedAt, OrderUpdatedAt, OrderIngestType)),
+		validation.Field(&req.OrderDir, validation.In(OrderAscending, OrderDescending)),
+		validation.Field(&req.PageSize, validation.Min(1), validation.Max(1000)),
+		validation.Field(&req.PageToken, validation.Length(1, 2048)),
+	)
+}
+
+func (req ChangeStateRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminName, validation.Required, validation.Length(1, 128)),
+		validation.Field(&req.Note, validation.Required, validation.Length(10, 512)),
+	)
+}
+
 func (req CreateUploadURLRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.OwnerID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerType,
-			validation.Required,
-			validation.Length(1, 128),
-			validation.In("course_part"),
-		),
-		validation.Field(
-			&req.CreatorID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.Title,
-			validation.Required,
-			validation.Length(3, 512),
-		),
+	return validation.ValidateStruct(
+		validation.Field(&req.AdminID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminName, validation.Required, validation.Length(1, 128)),
+		validation.Field(&req.Title, validation.Length(1, 256)),
 	)
 }
 
-// Validate validates fields of [asset.AssociateRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - OwnerID: required, valid UUID.
-//   - OwnerType: required, min 3 characters, max 128 characters, one of: ["course_part"].
-func (req AssociateRequest) Validate() error {
+func (req ManageOwnerRequest) Validate() error {
 	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerType,
-			validation.Required,
-			validation.Length(1, 128),
-			validation.In("course_part"),
-		),
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.OwnerID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.OwnerType, validation.In("lesson")),
 	)
 }
 
-// Validate validates fields of [asset.CreateUnownedUploadURLRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - Title: required, string, at least 3 characters, max 512 characters.
-//   - CreatorID: required, valid UUID.
-func (req CreateUnownedUploadURLRequest) Validate() error {
+func (req GeneratePlaybackTokenRequest) Validate() error {
 	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.Title,
-			validation.Required,
-			validation.Length(3, 512),
-		),
-		validation.Field(
-			&req.CreatorID,
-			validation.Required,
-			is.UUID,
-		),
+		validation.Field(&req.AssetID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.UserID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.Expiration, validation.Required, validation.Min(int64(15*60))),
+		validation.Field(&req.UserAgent, validation.Length(1, 256)),
+		validation.Field(&req.SessionID, validationutil.UUIDRule(false)...),
 	)
 }
 
-// Validate validates fields of [asset.DeassociateRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - OwnerID: required, valid UUID.
-//   - OwnerType: required, min 3 characters, max 128 characters, one of: ["course_part"].
-func (req DeassociateRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerType,
-			validation.Required,
-			validation.Length(1, 128),
-			validation.In("course_part"),
-		),
-	)
+var (
+	validFields     map[string]bool
+	validFieldsOnce sync.Once
+)
+
+// ValidFields returns all valid field names for the Asset struct.
+func ValidFields() map[string]bool {
+	validFieldsOnce.Do(func() {
+		validFields := make(map[string]bool)
+		t := reflect.TypeOf(Asset{})
+
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if tag := field.Tag.Get("gorm"); tag != "" {
+				if col := parsing.ParseColumnTag(tag); col != "" {
+					validFields[col] = true
+					continue
+				}
+			}
+			validFields[formatting.ToSnakeCase(field.Name)] = true
+		}
+	})
+	return validFields
 }
 
-// Validate validates fields of [asset.UpdateOwnersRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - Owners: required, slice of [metamodel.Owner], each must have a valid UUID and valid OwnerType.
-func (req UpdateOwnersRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.Owners,
-			validation.Required,
-			validation.Length(1, 0),
-			validation.Each(
-				validation.By(
-					func(value interface{}) error {
-						if owner, ok := value.(metamodel.Owner); ok {
-							if _, err := uuid.Parse(owner.OwnerID); err != nil {
-								return errors.New("must be a valid uuid")
-							}
-							if len(owner.OwnerType) <= 3 {
-								return errors.New("must be at least 4 characters long")
-							}
-						}
-						return nil
-					},
-				),
-			),
-		),
-	)
+// IsValidField checks if a field name is valid for selection.
+func IsValidField(field string) bool {
+	return ValidFields()[field]
 }

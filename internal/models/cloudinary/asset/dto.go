@@ -1,21 +1,3 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-// Package asset provides models, DTO models for [cloudinary.Service] requests and validation tools.
 package asset
 
 import (
@@ -24,27 +6,51 @@ import (
 	metamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
 )
 
-// AssetResponse is a DTO that combines the core Asset model with its metadata.
-type AssetResponse struct {
-	*Asset
-	Owners []metamodel.Owner `json:"owners,omitempty"`
+type OrderDirection string
+
+const (
+	OrderAscending  OrderDirection = "ASC"
+	OrderDescending OrderDirection = "DESC"
+)
+
+type OrderField string
+
+const (
+	OrderCreatedAt    OrderField = "created_at"
+	OrderUpdatedAt    OrderField = "updated_at"
+	OrderResourceType OrderField = "resource_type"
+	OrderFormat       OrderField = "format"
+)
+
+// Details is a DTO that combines the core Asset model with its metadata.
+type Details struct {
+	Asset    *Asset
+	Metadata *metamodel.AssetMetadata
 }
 
-type AssociateRequest struct {
-	ID        string `json:"id"`
+type GetFilter struct {
+	ID string `param:"id" json:"-"`
+}
+
+type ListRequest struct {
+	IDs                 []string `query:"ids" json:"-"`
+	CloudinaryAssetIDs  []string `query:"cloudinary_asset_ids" json:"-"`
+	CloudinaryPublicIDs []string `query:"cloudinary_public_ids" json:"-"`
+
+	ResourceTypes []string `query:"resource_types" json:"-"`
+	Formats       []string `query:"formats" json:"-"`
+
+	OrderDir   OrderDirection `query:"order_dir" json:"-"`
+	OrderField OrderField     `query:"order_field" json:"-"`
+
+	PageSize  int    `query:"page_size" json:"-"`
+	PageToken string `query:"page_token" json:"-"`
+}
+
+type ManageOwnerRequest struct {
+	ID        string `param:"id" json:"-"`
 	OwnerID   string `json:"owner_id"`
 	OwnerType string `json:"owner_type"`
-}
-
-type DeassociateRequest struct {
-	ID        string `json:"id"`
-	OwnerID   string `json:"owner_id"`
-	OwnerType string `json:"owner_type"`
-}
-
-type UpdateOwnersRequest struct {
-	ID     string            `json:"id"`
-	Owners []metamodel.Owner `json:"owners"`
 }
 
 type CreateSignedUploadURLRequest struct {
@@ -53,15 +59,20 @@ type CreateSignedUploadURLRequest struct {
 	File     string  `json:"file"`
 }
 
-type DestroyAssetRequest struct {
-	ID           string `json:"id"`
-	ResourceType string `json:"resource_type"`
+type GeneratedSignedParams struct {
+	Signature    string  `json:"signature"`
+	Timestamp    string  `json:"timestamp"`
+	ApiKey       string  `json:"api_key"`
+	Eager        *string `json:"eager,omitempty"`
+	PublicID     string  `json:"public_id"`
+	ResourceType string  `json:"resource_type,omitempty"`
 }
 
-type CleanupOrphanAssetsRequest struct {
-	// Folder specifies the Cloudinary folder to scan for orphans.
-	Folder    string `json:"folder"`
-	AssetType string `json:"asset_type"`
+type ChangeStateRequest struct {
+	ID        string `param:"id" json:"-"`
+	AdminID   string `json:"admin_id"`
+	AdminName string `json:"admin_name"`
+	Note      string `json:"note"`
 }
 
 type SuccessfulUploadRequest struct {
@@ -75,7 +86,6 @@ type SuccessfulUploadRequest struct {
 	SecureURL          string `json:"secure_url"`
 	AssetFolder        string `json:"asset_folder"`
 	DisplayName        string `json:"display_name"`
-	Owners             []metamodel.Owner
 }
 
 // CloudinaryUploadWebhook represents Cloudinary API webhook triggered by an asset upload.

@@ -1,33 +1,20 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 package metadata
 
-// AssetMetadata represents the metadata for a MUX asset stored in ArangoDB.
+import "github.com/mikhail5545/media-service-go/internal/models/mux/types"
+
+// AssetMetadata represents the metadata for a MUX asset stored in MongoDB.
 type AssetMetadata struct {
 	// The _key field will be internal asset ID from PostgreSQL database.
-	Key       string  `json:"_key,omitempty"`
-	Title     string  `json:"title"`
-	CreatorID string  `json:"creator_id"`
-	Owners    []Owner `json:"owners"`
+	Key         string                       `bson:"_id,omitempty" json:"_key,omitempty"`
+	Title       string                       `bson:"title" json:"title"`
+	CreatorID   string                       `bson:"creator_id" json:"creator_id"`
+	Owners      []Owner                      `bson:"owners" json:"owners"`
+	Tracks      []types.MuxWebhookTrack      `bson:"tracks" json:"tracks"`
+	PlaybackIDs []types.MuxWebhookPlaybackID `bson:"playback_ids" json:"playback_ids"`
 }
 
 // Owner represents an entity that is associated with an asset.
 type Owner struct {
-	OwnerID   string `json:"owner_id"`
-	OwnerType string `json:"owner_type"`
+	OwnerID   string `bson:"owner_id" json:"owner_id"`
+	OwnerType string `bson:"owner_type" json:"owner_type"`
 }

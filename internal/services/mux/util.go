@@ -1,111 +1,72 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 /*
-Package mux provides service-layer business logic for for mux asset model.
-*/
+ * Copyright (c) 2026. Mikhail Kulik.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 package mux
 
 import (
 	"fmt"
+	"reflect"
 
+	"github.com/google/uuid"
+	assetrepo "github.com/mikhail5545/media-service-go/internal/database/postgres/mux/asset"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
-	detailmodel "github.com/mikhail5545/media-service-go/internal/models/mux/detail"
-	metamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
-	"google.golang.org/grpc/status"
+	muxtypes "github.com/mikhail5545/media-service-go/internal/models/mux/types"
+	"github.com/mikhail5545/media-service-go/internal/util/memory"
+	"github.com/mikhail5545/media-service-go/internal/util/parsing"
+	"github.com/mikhail5545/media-service-go/internal/util/patch"
 )
 
-// handleGRPCError is a helper function to handle gRPC client errors and return [mux.Error] with
-// appropriate message and status code.
-func handleGRPCError(err error) error {
-	st, ok := status.FromError(err)
-	if !ok {
-		return fmt.Errorf("unexpected error occurred: %w", err)
+func retrieveAssetID(opt assetSearchOptions) (*assetrepo.GetOptions, error) {
+	var assetID uuid.UUID
+	var err error
+
+	if opt.GetOptions != nil {
+		return opt.GetOptions, nil
 	}
-	return fmt.Errorf("(gRPC call ended with code %d) %w: %s", st.Code(), st.Err(), st.Message())
+
+	if opt.AssetUUID != nil {
+		assetID = *opt.AssetUUID
+	} else if opt.AssetID != "" {
+		assetID, err = parsing.StrToUUID(opt.AssetID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("either AssetID or AssetUUID must be provided")
+	}
+	return &assetrepo.GetOptions{
+		ID: assetID,
+	}, nil
 }
 
-func groupOwnersByTypeFromMetadata(owners []metamodel.Owner) map[string]map[string]struct{} {
-	grouped := make(map[string]map[string]struct{})
-	for _, owner := range owners {
-		if _, ok := grouped[owner.OwnerType]; !ok {
-			grouped[owner.OwnerType] = make(map[string]struct{})
-		}
-		grouped[owner.OwnerType][owner.OwnerID] = struct{}{}
-	}
-	return grouped
-}
+func buildAssetUpdatesFromWebhook(existing *assetmodel.Asset, data *muxtypes.MuxWebhookData) map[string]any {
+	updates := make(map[string]any)
 
-func diffOwnerMaps(old, new map[string]map[string]struct{}) (toAdd, toDelete map[string][]string) {
-	toAdd = make(map[string][]string)
-	toDelete = make(map[string][]string)
+	patch.UpdateIfChanged(updates, "asset_created_at", &data.CreatedAt, existing.AssetCreatedAt)
+	patch.UpdateIfChanged(updates, "state", &data.Progress.State, memory.MakePtr(string(existing.State)))
+	patch.UpdateIfChanged(updates, "upload_status", data.Status, memory.MakePtr(string(existing.UploadStatus)))
+	patch.UpdateIfChanged(updates, "duration", data.Duration, existing.Duration)
+	patch.UpdateIfChanged(updates, "resolution_tier", data.ResolutionTier, existing.ResolutionTier)
+	patch.UpdateIfChanged(updates, "aspect_ratio", data.AspectRatio, existing.AspectRatio)
+	patch.UpdateIfChanged(updates, "ingest_type", data.IngestType, memory.MakePtr(string(existing.IngestType)))
 
-	// Find what to add
-	for ownerType, newIDs := range new {
-		oldIDs, oldTypeExists := old[ownerType]
-		for id := range newIDs {
-			if !oldTypeExists {
-				toAdd[ownerType] = append(toAdd[ownerType], id)
-				continue
-			}
-			if _, found := oldIDs[id]; !found {
-				toAdd[ownerType] = append(toAdd[ownerType], id)
-			}
-		}
+	if len(data.PlaybackIDs) > 0 && !reflect.DeepEqual(data.PlaybackIDs, existing.MuxPlaybackIDs) {
+		updates["mux_playback_ids"] = data.PlaybackIDs
 	}
 
-	// Find what to delete
-	for ownerType, oldIDs := range old {
-		newIDs, newTypeExists := new[ownerType]
-		if !newTypeExists { // whole type was removed
-			for id := range oldIDs {
-				toDelete[ownerType] = append(toDelete[ownerType], id)
-			}
-			continue
-		}
-		for id := range oldIDs {
-			if _, found := newIDs[id]; !found {
-				toDelete[ownerType] = append(toDelete[ownerType], id)
-			}
-		}
-	}
-
-	return toAdd, toDelete
-}
-
-// combineAssetAndMetadata is a helper to merge an Asset and its metadata into an AssetResponse DTO.
-func (s *service) combineAssetAndMetadata(
-	asset *assetmodel.Asset,
-	metadata *metamodel.AssetMetadata,
-	details *detailmodel.AssetDetail,
-) *assetmodel.AssetResponse {
-	response := &assetmodel.AssetResponse{
-		Asset: asset,
-	}
-
-	if metadata != nil {
-		response.Title = metadata.Title
-		response.CreatorID = metadata.CreatorID
-		response.Owners = metadata.Owners
-	}
-
-	if details != nil {
-		response.Tracks = details.Tracks
-	}
-
-	return response
+	return updates
 }

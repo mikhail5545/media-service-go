@@ -24,8 +24,8 @@ import (
 	adminmuxhandler "github.com/mikhail5545/media-service-go/internal/handlers/admin/mux"
 	cldwebhookhandler "github.com/mikhail5545/media-service-go/internal/handlers/hooks/cloudinary"
 	muxwebhookhandler "github.com/mikhail5545/media-service-go/internal/handlers/hooks/mux"
-	cloudinaryservice "github.com/mikhail5545/media-service-go/internal/services/cloudinary"
-	muxservice "github.com/mikhail5545/media-service-go/internal/services/mux"
+	cloudinaryservice "github.com/mikhail5545/media-service-go/internal/services_outdated/cloudinary"
+	muxservice "github.com/mikhail5545/media-service-go/internal/services_outdated/mux"
 )
 
 func SetupRouter(e *echo.Echo, muxService muxservice.Service, cldService cloudinaryservice.Service) {

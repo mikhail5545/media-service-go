@@ -1,23 +1,3 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-/*
-Package mux provides service-layer business logic for for mux asset model.
-*/
 package mux
 
 import (
@@ -26,731 +6,472 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/mikhail5545/media-service-go/internal/clients/mux"
-	metarepo "github.com/mikhail5545/media-service-go/internal/database/arango/mux/metadata"
-	assetrepo "github.com/mikhail5545/media-service-go/internal/database/mux/asset"
-	detailrepo "github.com/mikhail5545/media-service-go/internal/database/mux/detail"
+	apiclient "github.com/mikhail5545/media-service-go/internal/apiclients/mux"
+	assetmetadatarepo "github.com/mikhail5545/media-service-go/internal/database/mongo/mux/metadata"
+	assetrepo "github.com/mikhail5545/media-service-go/internal/database/postgres/mux/asset"
+	"github.com/mikhail5545/media-service-go/internal/database/types"
+	serviceerrors "github.com/mikhail5545/media-service-go/internal/errors"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
-	metamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
-	videoservice "github.com/mikhail5545/product-service-go/pkg/client/video"
-	videopb "github.com/mikhail5545/proto-go/proto/product_service/video/v0"
+	metadatamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
+	muxtypes "github.com/mikhail5545/media-service-go/internal/models/mux/types"
+	"github.com/mikhail5545/media-service-go/internal/util/parsing"
+	"github.com/mikhail5545/product-service-client/client"
 	muxgo "github.com/muxinc/mux-go/v6"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
-// Service provides service-layer business logic for mux assets.
-// It acts as adapter between repository-layer CRUD logic [muxrepo.Repository] and
-// handler layers/server layers.
-type Service interface {
-	// Get retrieves a single published and not soft-deleted mux upload record from the database along with it's metadata.
-	//
-	// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Get(ctx context.Context, id string) (*assetmodel.AssetResponse, error)
-	// GetWithDeleted retrieves a single mux upload record from the database along with it's metadata, including soft-deleted ones.
-	//
-	// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-	// or a database/internal error occurs.
-	GetWithDeleted(ctx context.Context, id string) (*assetmodel.AssetResponse, error)
-	// List retrieves a paginated list of all published and not soft-deleted mux upload records along with their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	List(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// ListUnowned retrieves a paginated list of all unowned mux upload records and their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	ListUnowned(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// ListDeleted retrieves a paginated list of all soft-deleted mux upload records and their metadata.
-	//
-	// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-	// and an error if one occurs.
-	// Returns an error if a database/internal error occurs.
-	ListDeleted(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error)
-	// Delete performs a soft delete of an asset.
-	// It should be called only for assets that don't have any owner or association.
-	//
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Delete(ctx context.Context, id string) error
-	// DeletePermanent performs a complete delete of a mux upload.
-	// It also deletes mux asset via MUX Direct Upload API if `upload.MuxAssetId` is populated.
-	//
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// delete of MUX asset failed (http.StatusServiceUnavailable),
-	// or a database/internal error occurs.
-	DeletePermanent(ctx context.Context, id string) error
-	// Restore performs a restore of a mux upload record.
-	// Mux upload record is not being published. This should be
-	// done manually.
-	//
-	// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Restore(ctx context.Context, id string) error
-	// CreateUploadURL creates upload URL for the direct upload using mux direct upload api.
-	// It uses [mux.Client.CreateUploadURL] method to access MUX direct upload API.
-	// If an owner already has an association with an asset, an error is returned.
-	//
-	// Returns a muxgo.UploadResponse struct on success.
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), if the owner already has an asset (ErrOwnerHasAsset),
-	// or if a MUX API, database, or gRPC error occurs.
+// AssetService defines the interface for managing MUX assets.
+type AssetService interface {
+	// Get retrieves an active asset based on the provided filter.
+	Get(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// GetWithArchived retrieves an asset that can be either active or archived based on the provided filter.
+	GetWithArchived(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// GetWithBroken retrieves an asset that can be active, archived, or broken based on the provided filter.
+	GetWithBroken(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error)
+	// List retrieves a list of active assets based on the provided request.
+	List(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// ListArchived retrieves a list of archived assets based on the provided request.
+	ListArchived(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// ListBroken retrieves a list of broken assets based on the provided request.
+	ListBroken(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error)
+	// CreateUploadURL generates a new upload URL for new MUX Direct Upload and creates a new asset.
+	// After this step, the rest of the asset information will be populated via incoming MUX webhooks.
 	CreateUploadURL(ctx context.Context, req *assetmodel.CreateUploadURLRequest) (*muxgo.UploadResponse, error)
-	// CreateUnownedUploadURL creates an upload URL for a new asset without an initial owner.
+	// Archive marks an asset as archived.
+	// Note that only assets without any owners can be archived.
+	Archive(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// MarkAsBroken marks an asset as broken.
+	// If the asset has owners, it notifies the product-service about the broken asset via [gRPC client].
 	//
-	// Returns a muxgo.UploadResponse struct on success.
-	// Returns an error if the request payload is invalid (ErrInvalidArgument),
-	// or a database/internal error occurs.
-	CreateUnownedUploadURL(ctx context.Context, req *assetmodel.CreateUnownedUploadURLRequest) (*muxgo.UploadResponse, error)
-	// Associate links an existing asset to an owner.
-	// It also updates asset medatada.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Associate(ctx context.Context, req *assetmodel.AssociateRequest) error
-	// Deassociate removes the link between an asset and an owner.
-	// It also deletes owner from asset metadata.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-	// or a database/internal error occurs.
-	Deassociate(ctx context.Context, req *assetmodel.DeassociateRequest) error
-	// UpdateOwners processes asset ownership relations changes.
-	// It recieves an updated list of asset owners, updates local DB metadata for asset (about it's owners),
-	// processes the diff between old and new owners and notifies external services about this ownership
-	// changes via gRPC connection.
-	//
-	// Returns an error if the request payload is invalid (ErrInvalidArgument), asset is not found (ErrNotFound),
-	// or a database/internal error occures.
-	UpdateOwners(ctx context.Context, req *assetmodel.UpdateOwnersRequest) error
-	// HandleAssetCreatedWebhook processes an incoming Mux webhook with "video.asset.created" event type, finds the corresponding asset,
-	// and updates it in a patch-like manner.
-	HandleAssetCreatedWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error
-	// HandleAssetReadyWebhook processes an incoming Mux webhook with "video.asset.ready" event type, finds the corresponding asset,
-	// and updates it in a patch-like manner.
-	HandleAssetReadyWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error
-	// HandleAssetErroredWebhook processes an incoming Mux webhook with "video.asset.errored" event type, finds the corresponding asset,
-	// and updates it in a patch-like manner. After update, it soft-deleted mux asset. If asset has owners, they will be deassociated and
-	// all asset metadata about it's owners will be cleared.
-	HandleAssetErroredWebhook(ctx context.Context, payload *assetmodel.MuxWebhook) error
+	// [gRPC client]: https://github.com/mikhail5545/product-service-client
+	MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// Delete permanently deletes an archived asset along with its metadata.
+	// It also deletes the asset from MUX.
+	// Note that only currently soft-deleted (archived) assets can be permanently deleted.
+	Delete(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// HandleAssetWebhook processes incoming MUX asset webhooks based on their type.
+	// It routes the webhook to the appropriate handler function.
+	// It does not return any error, as we want to avoid retrying the webhook processing in case of failure.
+	HandleAssetWebhook(ctx context.Context, payload *muxtypes.MuxWebhook) error
+	// AddOwner associates an external owner with an asset.
+	// It updates the asset metadata in MongoDB to include the new owner.
+	// Broken or archived assets cannot have owners added.
+	AddOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error
+	// RemoveOwner disassociates an external owner from an asset.
+	// It updates the asset metadata in MongoDB to remove the specified owner.
+	RemoveOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error
+	// Restore restores an archived asset back to active status.
+	// Only archived assets can be restored.
+	Restore(ctx context.Context, req *assetmodel.ChangeStateRequest) error
+	// GeneratePlaybackToken generates a signed JWT playback token for secure video playback.
+	GeneratePlaybackToken(ctx context.Context, req *assetmodel.GeneratePlaybackTokenRequest) (string, error)
 }
 
-// service provides service-layer business logic for mux assets.
-// It acts as adapter between repository-layer CRUD logic [muxrepo.Repository] and
-// handler layers/server layers.
-type service struct {
-	// Repo represents repository-layer logic for CRUD operations.
-	Repo assetrepo.Repository
-	// metaRepo represents repository-layer logic for asset's metadata CRUD opearatations.
-	metaRepo metarepo.Repository
-	// detailRepo represents repository-layer logic for asset's details CRUD operations.
-	detailRepo detailrepo.Repository
-	// Client represents MUX API client for direct asset management.
-	Client         mux.MUX
-	VideoSvcClient videoservice.Service
+// Service implements the AssetService interface for managing MUX assets.
+type Service struct {
+	repo                     *assetrepo.Repository
+	metadataRepo             *assetmetadatarepo.Repository
+	lessonVideoVersionClient *client.LessonVideoVersionServiceClient
+	videoClient              *client.VideoServiceClient
+	apiClient                *apiclient.Client
+	logger                   *zap.Logger
 }
 
-// New creates new instance of a [mux.service]
+var _ AssetService = (*Service)(nil)
+
+type NewParams struct {
+	Repo                     *assetrepo.Repository
+	MetadataRepo             *assetmetadatarepo.Repository
+	LessonVideoVersionClient *client.LessonVideoVersionServiceClient
+	VideoClient              *client.VideoServiceClient
+	ApiClient                *apiclient.Client
+}
+
 func New(
-	repo assetrepo.Repository,
-	mr metarepo.Repository,
-	dr detailrepo.Repository,
-	client mux.MUX,
-	vsc videoservice.Service,
-) Service {
-	return &service{
-		Repo:           repo,
-		metaRepo:       mr,
-		detailRepo:     dr,
-		Client:         client,
-		VideoSvcClient: vsc,
+	params *NewParams,
+	logger *zap.Logger,
+) *Service {
+	return &Service{
+		repo:                     params.Repo,
+		lessonVideoVersionClient: params.LessonVideoVersionClient,
+		videoClient:              params.VideoClient,
+		metadataRepo:             params.MetadataRepo,
+		apiClient:                params.ApiClient,
+		logger:                   logger.With(zap.String("layer", "service"), zap.String("service", "mux")),
 	}
 }
 
-// Get retrieves a single not soft-deleted asset record from the database along with it's metadata.
-//
-// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Get(ctx context.Context, id string) (*assetmodel.AssetResponse, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	asset, err := s.Repo.Get(ctx, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil, fmt.Errorf("failed to retrieve mux upload: %w", err)
-	}
-
-	metadata, err := s.metaRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
-	}
-
-	details, err := s.detailRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset details: %w", err)
-	}
-
-	response := s.combineAssetAndMetadata(asset, metadata, details)
-
-	return response, nil
-}
-
-// GetWithDeleted retrieves a single asset record from the database along with it's metadata, including soft-deleted ones.
-//
-// Returns a [assetmodel.AssetResponse] struct containing the combined information.
-// Returns an error if the ID is invalid (ErrInvalidArgument), the record is not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) GetWithDeleted(ctx context.Context, id string) (*assetmodel.AssetResponse, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	asset, err := s.Repo.GetWithDeleted(ctx, id)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil, fmt.Errorf("failed to retrieve mux upload: %w", err)
-	}
-
-	metadata, err := s.metaRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
-	}
-
-	details, err := s.detailRepo.Get(ctx, id)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("failed to retrieve asset details: %w", err)
-	}
-
-	response := s.combineAssetAndMetadata(asset, metadata, details)
-
-	return response, nil
-}
-
-// List retrieves a paginated list of all not soft-deleted asset records along with their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) List(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	assets, err := s.Repo.List(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve mux assets: %w", err)
-	}
-	if len(assets) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	total, err := s.Repo.Count(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count mux assets: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i, asset := range assets {
-		assetIDs[i] = asset.ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve details for assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
-	}
-
-	return responses, total, nil
-}
-
-// ListUnowned retrieves a paginated list of all unowned asset records and their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) ListUnowned(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	unownedIDs, err := s.metaRepo.ListUnownedIDs(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve unowned asset IDs: %w", err)
-	}
-	if len(unownedIDs) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	assets, err := s.Repo.ListByIDs(ctx, limit, offset, unownedIDs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve unowned assets by IDs: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i := range assets {
-		assetIDs[i] = assets[i].ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve details for unowned assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
-	}
-
-	return responses, int64(len(unownedIDs)), nil
-}
-
-// ListDeleted retrieves a paginated list of all soft-deleted asset records and their metadata.
-//
-// Returns a slice of [assetmodel.AssetResponse] structs containing the combined information, the total count of such records,
-// and an error if one occurs.
-// Returns an error if a database/internal error occurs.
-func (s *service) ListDeleted(ctx context.Context, limit, offset int) ([]assetmodel.AssetResponse, int64, error) {
-	assets, err := s.Repo.ListDeleted(ctx, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve mux assets: %w", err)
-	}
-	if len(assets) == 0 {
-		return []assetmodel.AssetResponse{}, 0, nil
-	}
-
-	total, err := s.Repo.CountDeleted(ctx)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count mux assets: %w", err)
-	}
-
-	assetIDs := make([]string, len(assets))
-	for i := range assets {
-		assetIDs[i] = assets[i].ID
-	}
-
-	metadataMap, err := s.metaRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve metadata for assets: %w", err)
-	}
-
-	detailMap, err := s.detailRepo.ListByAssetIDs(ctx, assetIDs...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to retrieve details for deleted assets: %w", err)
-	}
-
-	responses := make([]assetmodel.AssetResponse, len(assets))
-	for i, asset := range assets {
-		responses[i] = *s.combineAssetAndMetadata(&asset, metadataMap[asset.ID], detailMap[asset.ID])
-	}
-
-	return responses, total, nil
-}
-
-// DeletePermanent performs a complete delete of an asset.
-// It also deletes mux asset via MUX Direct Upload API if `upload.MuxAssetId` is populated.
-//
-// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// delete of MUX asset failed (http.StatusServiceUnavailable),
-// or a database/internal error occurs.
-func (s *service) DeletePermanent(ctx context.Context, id string) error {
-	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-
-		asset, err := txRepo.Get(ctx, id)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve mux upload: %w", err)
-		}
-		if asset.MuxAssetID != nil {
-			if err := s.Client.DeleteAsset(*asset.MuxAssetID); err != nil {
-				return err
-			}
-		}
-		// Completely clear asset metadata in the ArangoDB.
-		if err := s.metaRepo.Delete(ctx, asset.ID); err != nil {
-			return fmt.Errorf("failed to delete asset metadata: %w", err)
-		}
-		// Delete asset from Postgres DB.
-		if _, err := txRepo.DeletePermanent(ctx, id); err != nil {
-			return fmt.Errorf("failed to delete mux upload: %w", err)
-		}
-		return nil
+// Get retrieves an active asset based on the provided filter.
+func (s *Service) Get(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+		assetrepo.ScopeUploadURLGenerated,
 	})
 }
 
-// Delete performs a soft delete of an asset.
-// If asset has any owners, they will be deassociated and local asset metadata about owhership will be deleted.
-//
-// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Delete(ctx context.Context, id string) error {
-	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-
-		asset, err := txRepo.Get(ctx, id)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
-		}
-
-		meta, err := s.metaRepo.Get(ctx, asset.ID)
-		if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
-		}
-
-		// If asset has owners, de-associate them
-		if meta != nil && len(meta.Owners) > 0 {
-			toRemove := make(map[string][]string)
-			for _, owner := range meta.Owners {
-				toRemove[owner.OwnerType] = append(toRemove[owner.OwnerType], owner.OwnerID)
-			}
-
-			// Notify other services via gRPC about ownership changes
-			if err := s.processChanges(ctx, asset, nil, toRemove); err != nil {
-				return fmt.Errorf("failed to notify external services about changes: %w", err)
-			}
-
-			// Delete all information about owners from asset metadata in the ArangoDB.
-			// This will keep asset metadata about Title and CreatorID untouched.
-			if err := s.metaRepo.Update(ctx, asset.ID, &metamodel.AssetMetadata{Owners: []metamodel.Owner{}}); err != nil {
-				return fmt.Errorf("failed to delete asset owners metadata: %w", err)
-			}
-		}
-
-		// Soft-delete asset
-		if _, err := s.Repo.WithTx(tx).Delete(ctx, id); err != nil {
-			return fmt.Errorf("failed to delete mux upload: %w", err)
-		}
-		return nil
+// GetWithArchived retrieves an asset that can be either active or archived based on the provided filter.
+func (s *Service) GetWithArchived(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+		assetrepo.ScopeArchived,
 	})
 }
 
-// Restore performs a restore of an asset.
-//
-// Returns an error if the ID is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Restore(ctx context.Context, id string) error {
-	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		ra, err := s.Repo.WithTx(tx).Restore(ctx, id)
-		if err != nil {
-			return fmt.Errorf("failed to restore mux upload: %w", err)
-		} else if ra == 0 {
-			return fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return nil
+// GetWithBroken retrieves an asset that can be active, archived, or broken based on the provided filter.
+func (s *Service) GetWithBroken(ctx context.Context, filter *assetmodel.GetFilter) (*assetmodel.Details, error) {
+	return s.get(ctx, filter, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+		assetrepo.ScopeArchived,
+		assetrepo.ScopeBroken,
 	})
 }
 
-// CreateUploadURL creates new signed upload url to upload a new asset.
-// It uses [muxclient.Client.CreateUploadURL] method to access MUX direct upload API.
-// This method can be called only for owners without associated asset. If owner has an asset,
-// they should be deassociated first.
-//
-// Returns muxgo.UploadResponse struct on success.
-// Returns an error if the request payload is invalid (ErrInvalidArgument), if owner already associated with an asset (ErrOwnerHasAsset),
-// or a database/internal error occures.
-func (s *service) CreateUploadURL(ctx context.Context, req *assetmodel.CreateUploadURLRequest) (*muxgo.UploadResponse, error) {
+// List retrieves a list of active assets based on the provided request.
+func (s *Service) List(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeActive,
+	})
+}
+
+// ListArchived retrieves a list of archived assets based on the provided request.
+func (s *Service) ListArchived(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeArchived,
+	})
+}
+
+// ListBroken retrieves a list of broken assets based on the provided request.
+func (s *Service) ListBroken(ctx context.Context, req *assetmodel.ListRequest) ([]*assetmodel.Details, string, error) {
+	return s.list(ctx, req, []assetrepo.Scope{
+		assetrepo.ScopeBroken,
+	})
+}
+
+// CreateUploadURL generates a new upload URL for new MUX Direct Upload and creates a new asset.
+// After this step, the rest of the asset information will be populated via incoming MUX webhooks.
+func (s *Service) CreateUploadURL(ctx context.Context, req *assetmodel.CreateUploadURLRequest) (*muxgo.UploadResponse, error) {
 	if err := req.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return nil, serviceerrors.NewValidationFailedError(err)
 	}
 
-	var response *muxgo.UploadResponse
-	err := s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
+	var resp *muxgo.UploadResponse
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-		getResponse, err := s.VideoSvcClient.GetOwner(ctx, &videopb.GetOwnerRequest{OwnerId: req.OwnerID, OwnerType: req.OwnerType})
+		newAssetID, err := uuid.NewV7()
 		if err != nil {
-			return handleGRPCError(err)
+			return fmt.Errorf("failed to generate new asset id: %w", err)
 		}
-
-		if getResponse.Owner.VideoId != nil {
-			return ErrOwnerHasAsset
-		}
-
-		data, err := s.Client.CreateUploadURL(req.CreatorID, req.Title)
-		if err != nil {
-			return err
-		}
-		response = data
-
 		newAsset := &assetmodel.Asset{
-			ID:          uuid.New().String(),
-			MuxUploadID: &data.Data.Id,
-			MuxAssetID:  &data.Data.AssetId,
-			State:       "url_upload_created",
+			ID:           newAssetID,
+			Status:       assetmodel.StatusUploadURLGenerated,
+			UploadStatus: assetmodel.UploadStatusPreparing,
 		}
+
+		s.logger.Info("generating upload url", zap.String("asset_id", newAssetID.String()))
+
+		muxMeta := &muxgo.AssetMetadata{
+			Title:      req.Title,
+			CreatorId:  req.AdminID,
+			ExternalId: newAssetID.String(),
+		}
+		resp, err = s.apiClient.CreateDirectUploadURL(ctx, muxMeta, muxgo.SIGNED, muxgo.PUBLIC)
+		if err != nil {
+			s.logger.Error("failed to create direct upload url", zap.Error(err), zap.String("asset_id", newAssetID.String()))
+			return fmt.Errorf("failed to create direct upload url: %w", err)
+		}
+
+		newAsset.MuxUploadID = &resp.Data.Id
+		newAsset.MuxAssetID = &resp.Data.AssetId
 
 		if err := txRepo.Create(ctx, newAsset); err != nil {
-			return fmt.Errorf("failed to create new asset: %w", err)
+			s.logger.Error("failed to create mux asset record", zap.Error(err), zap.String("asset_id", newAssetID.String()))
+			return fmt.Errorf("failed to create mux asset record: %w", err)
 		}
 
-		newOwners := []metamodel.Owner{{OwnerID: req.OwnerID, OwnerType: req.OwnerType}}
+		s.logger.Info("successfully generated upload url", zap.String("asset_id", newAssetID.String()), zap.String("upload_url", resp.Data.Url))
 
-		newMetadata := &metamodel.AssetMetadata{
-			Key:       newAsset.ID,
-			CreatorID: req.CreatorID,
+		metadata := &metadatamodel.AssetMetadata{
+			Key:       newAssetID.String(),
 			Title:     req.Title,
-			Owners:    newOwners,
+			CreatorID: req.AdminID,
+			Owners:    []metadatamodel.Owner{},      // initialize empty owners slice
+			Tracks:    []muxtypes.MuxWebhookTrack{}, // initialize empty tracks slice
 		}
 
-		if err := s.metaRepo.Create(ctx, newMetadata); err != nil {
-			return fmt.Errorf("failed to create new asset metadata: %w", err)
+		if err := s.metadataRepo.Create(ctx, metadata); err != nil {
+			s.logger.Error("failed to create asset metadata", zap.Error(err), zap.String("asset_id", newAssetID.String()))
+			return fmt.Errorf("failed to create asset metadata: %w", err)
 		}
-
-		if _, err := s.VideoSvcClient.Add(ctx, &videopb.AddRequest{
-			OwnerId:        req.OwnerID,
-			OwnerType:      req.OwnerType,
-			MediaServiceId: newAsset.ID,
-		}); err != nil {
-			return handleGRPCError(err)
-		}
-
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return response, nil
+	return resp, nil
 }
 
-// CreateUnownedUploadURL creates an upload URL for a new asset without an initial owner.
-//
-// Returns a muxgo.UploadResponse struct on success.
-// Returns an error if the request payload is invalid (ErrInvalidArgument),
-// or a database/internal error occurs.
-func (s *service) CreateUnownedUploadURL(ctx context.Context, req *assetmodel.CreateUnownedUploadURLRequest) (*muxgo.UploadResponse, error) {
+// Archive marks an asset as archived.
+// Note that only assets without any owners can be archived.
+func (s *Service) Archive(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	var response *muxgo.UploadResponse
-	err := s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-		data, err := s.Client.CreateUploadURL(req.CreatorID, req.Title)
+		assetID, err := parsing.StrToUUID(req.ID)
 		if err != nil {
 			return err
 		}
-		response = data
-
-		newAsset := &assetmodel.Asset{
-			ID:          uuid.New().String(),
-			MuxUploadID: &data.Data.Id,
-			MuxAssetID:  &data.Data.AssetId,
-			State:       "url_upload_created",
-		}
-
-		if err := txRepo.Create(ctx, newAsset); err != nil {
-			return fmt.Errorf("failed to create new asset: %w", err)
-		}
-
-		newMetadata := &metamodel.AssetMetadata{
-			Key:       newAsset.ID,
-			CreatorID: req.CreatorID,
-			Title:     req.Title,
-			Owners:    []metamodel.Owner{}, // No owners initially
-		}
-
-		if err := s.metaRepo.Create(ctx, newMetadata); err != nil {
-			return fmt.Errorf("failed to create new asset metadata: %w", err)
-		}
-
-		return nil
-	})
-
-	return response, err
-}
-
-// Associate links an existing asset to an owner.
-// It also updates asset medatada.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Associate(ctx context.Context, req *assetmodel.AssociateRequest) error {
-	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.Repo.WithTx(tx)
-
-		getResponse, err := s.VideoSvcClient.GetOwner(ctx, &videopb.GetOwnerRequest{OwnerId: req.OwnerID, OwnerType: req.OwnerType})
-		if err != nil {
-			return handleGRPCError(err)
-		}
-
-		if getResponse.Owner.VideoId != nil {
-			return ErrOwnerHasAsset
-		}
-
-		// Retrieve asset from the database
-		asset, err := txRepo.Get(ctx, req.ID)
+		asset, err := txRepo.Get(ctx, assetrepo.GetOptions{ID: assetID})
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
+				return serviceerrors.NewNotFoundError(err)
 			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
+			s.logger.Error("failed to retrieve asset for archiving", zap.Error(err), zap.String("asset_id", req.ID))
+			return fmt.Errorf("failed to retrieve asset for archiving: %w", err)
 		}
 
-		// Retrieve asset metadata from ArangoDB
-		currentMetadata, err := s.metaRepo.Get(ctx, asset.ID)
+		if err := validateBeforeArchive(asset); err != nil {
+			return err
+		}
+
+		metadata, err := s.getAssetMetadata(ctx, assetID)
 		if err != nil {
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
+			return err
+		}
+		if len(metadata.Owners) > 0 {
+			return serviceerrors.NewConflictError("cannot archive asset that is associated with owners")
 		}
 
-		var newOwners []metamodel.Owner
-		newOwners = append(newOwners, currentMetadata.Owners...)
-		newOwners = append(newOwners, metamodel.Owner{
-			OwnerID:   req.OwnerID,
-			OwnerType: req.OwnerType,
+		return s.archiveAsset(ctx, txRepo, req, assetID)
+	})
+}
+
+// MarkAsBroken marks an asset as broken.
+// If the asset has owners, it notifies the product-service about the broken asset via [gRPC client].
+//
+// [gRPC client]: https://github.com/mikhail5545/product-service-client
+func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, []string{
+			"id", "status", "upload_status",
+		}, assetSearchOptions{
+			AssetID: req.ID,
 		})
-
-		if err := s.metaRepo.Update(ctx, asset.ID, &metamodel.AssetMetadata{
-			Owners: newOwners,
-		}); err != nil {
-			return fmt.Errorf("failed to update asset metadata: %w", err)
+		if asset.Status == assetmodel.StatusBroken {
+			return serviceerrors.NewConflictError("asset is already marked as broken")
 		}
 
-		// Associate owner with the asset
-		if _, err = s.VideoSvcClient.Add(ctx, &videopb.AddRequest{
-			OwnerId:        req.OwnerID,
-			OwnerType:      req.OwnerType,
-			MediaServiceId: req.ID,
-		}); err != nil {
-			return handleGRPCError(err)
+		metadata, err := s.getAssetMetadata(ctx, asset.ID)
+		if err != nil {
+			return err
+		}
+
+		adminID, err := parsing.StrToUUID(req.AdminID)
+		if err != nil {
+			return err
+		}
+		if len(metadata.Owners) > 0 {
+			if err := s.grpcMarkAsBroken(ctx, asset.ID, adminID, req); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 }
 
-// Deassociate removes the link between an asset and an owner.
-// It also deletes owner from asset metadata.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), the records are not found (ErrNotFound),
-// or a database/internal error occurs.
-func (s *service) Deassociate(ctx context.Context, req *assetmodel.DeassociateRequest) error {
+// Delete permanently deletes an archived asset along with its metadata.
+// It also deletes the asset from MUX.
+// Note that only currently soft-deleted (archived) assets can be permanently deleted.
+func (s *Service) Delete(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
 	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
+		return serviceerrors.NewValidationFailedError(err)
 	}
+	var assetIDtoDelete *uuid.UUID
+	var muxAssetIDtoDelete *string
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
 
-	return s.Repo.DB().Transaction(func(tx *gorm.DB) error {
-		// Ensure asset exists
-		_, err := s.Repo.WithTx(tx).Get(ctx, req.ID)
+		asset, err := s.getInTx(ctx, txRepo, []string{
+			"id", "status", "upload_status",
+		}, assetSearchOptions{
+			AssetID: req.ID,
+		})
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("%w: %w", ErrNotFound, err)
-			}
-			return fmt.Errorf("failed to retrieve asset: %w", err)
+			return err
+		}
+		if asset.Status != assetmodel.StatusArchived {
+			return serviceerrors.NewConflictError("only archived assets can be deleted")
 		}
 
-		// Get current owners
-		currentMetadata, err := s.metaRepo.Get(ctx, req.ID)
-		if err != nil {
-			if errors.Is(err, metarepo.ErrNotFound) {
-				// Asset has no owners, nothing to deassociate.
-				return nil
-			}
-			return fmt.Errorf("failed to retrieve asset metadata: %w", err)
+		// Delete asset record from Postgres
+		if _, err := txRepo.Delete(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}); err != nil {
+			s.logger.Error("failed to delete mux asset record", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to delete mux asset record: %w", err)
 		}
-
-		// Remove the specified owner from the list
-		var newOwners []metamodel.Owner
-		for _, owner := range currentMetadata.Owners {
-			if owner.OwnerID == req.OwnerID && owner.OwnerType == req.OwnerType {
-				continue // Skip the owner to be removed
-			}
-			newOwners = append(newOwners, owner)
-		}
-
-		// Update metadata in ArangoDB
-		if err := s.metaRepo.Update(ctx, req.ID, &metamodel.AssetMetadata{Owners: newOwners}); err != nil {
-			return fmt.Errorf("failed to update asset metadata: %w", err)
-		}
-
-		// Notify other services
-		if _, err = s.VideoSvcClient.Remove(ctx, &videopb.RemoveRequest{
-			OwnerId: req.OwnerID, OwnerType: req.OwnerType,
-		}); err != nil {
-			return handleGRPCError(err)
-		}
+		assetIDtoDelete = &asset.ID
+		muxAssetIDtoDelete = asset.MuxAssetID
 		return nil
 	})
-}
-
-// UpdateOwners processes asset ownership relations changes.
-// It recieves an updated list of asset owners, updates local DB metadata for asset (about it's owners),
-// processes the diff between old and new owners and notifies external services about this ownership
-// changes via gRPC connection.
-//
-// Returns an error if the request payload is invalid (ErrInvalidArgument), asset is not found (ErrNotFound),
-// or a database/internal error occures.
-func (s *service) UpdateOwners(ctx context.Context, req *assetmodel.UpdateOwnersRequest) error {
-	if err := req.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidArgument, err)
-	}
-
-	// Ensure asset exists in Postgres before updating metadata in ArangoDB
-	asset, err := s.Repo.Get(ctx, req.ID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("%w: %w", ErrNotFound, err)
-		}
-		return fmt.Errorf("failed to retrieve asset: %w", err)
+		return err
 	}
-
-	currentMetadata, err := s.metaRepo.Get(ctx, req.ID)
-	var currentOwners []metamodel.Owner
-	if err != nil && !errors.Is(err, metarepo.ErrNotFound) {
-		return fmt.Errorf("failed to get asset owners metadata: %w", err)
-	} else if errors.Is(err, metarepo.ErrNotFound) {
-		// Not found is a valid case, it just means there are no owners yet.
-	} else if currentMetadata != nil {
-		currentOwners = currentMetadata.Owners
-	}
-
-	currentOwnerMap := groupOwnersByTypeFromMetadata(currentOwners)
-	newOwnerMap := groupOwnersByTypeFromMetadata(req.Owners)
-
-	// Calculate what to add and what to delete
-	toAdd, toDelete := diffOwnerMaps(currentOwnerMap, newOwnerMap)
-
-	// Update assest metadata (owners) in ArangoDB
-	if err := s.metaRepo.Update(ctx, req.ID, &metamodel.AssetMetadata{
-		Owners: req.Owners,
-	}); err != nil {
-		return fmt.Errorf("failed to update asset metadata in ArangoDB: %w", err)
-	}
-
-	// After successful DB update, notify other services via gRPC
-	if err := s.processChanges(ctx, asset, toAdd, toDelete); err != nil {
-		return fmt.Errorf("failed to notify external services: %w", err)
+	if err := s.deleteMetadataAndMuxAsset(ctx, assetIDtoDelete, muxAssetIDtoDelete); err != nil {
+		return err
 	}
 	return nil
+}
+
+// AddOwner associates an external owner with an asset.
+// It updates the asset metadata in MongoDB to include the new owner.
+// Broken or archived assets cannot have owners added.
+func (s *Service) AddOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, []string{
+			"id", "status", "upload_status",
+		}, assetSearchOptions{
+			AssetID: req.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if asset.Status == assetmodel.StatusArchived || asset.Status == assetmodel.StatusBroken {
+			return serviceerrors.NewConflictError("cannot add owner to archived or broken asset")
+		}
+		if asset.UploadStatus == assetmodel.UploadStatusErrored || asset.UploadStatus == assetmodel.UploadStatusDeleted {
+			return serviceerrors.NewConflictError("cannot add owner to asset with errored or deleted upload status")
+		}
+
+		return s.addOwner(ctx, asset.ID, req)
+	})
+}
+
+// RemoveOwner disassociates an external owner from an asset.
+// It updates the asset metadata in MongoDB to remove the specified owner.
+func (s *Service) RemoveOwner(ctx context.Context, req *assetmodel.ManageOwnerRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, []string{
+			"id", "status", "upload_status",
+		}, assetSearchOptions{
+			AssetID: req.ID,
+		})
+		if err != nil {
+			return err
+		}
+
+		toRemove := metadatamodel.Owner{
+			OwnerID:   req.OwnerID,
+			OwnerType: req.OwnerType,
+		}
+		metadata, err := s.metadataRepo.GetByOwner(ctx, asset.ID.String(), &toRemove)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				return serviceerrors.NewNotFoundError(err)
+			}
+			s.logger.Error("failed to retrieve asset metadata for removing owner",
+				zap.Error(err), zap.String("owner_id", req.OwnerID), zap.String("owner_type", req.OwnerType),
+			)
+			return fmt.Errorf("failed to retrieve asset metadata for removing owner: %w", err)
+		}
+		return s.removeOwner(ctx, metadata, req)
+	})
+}
+
+// Restore restores an archived asset back to active status.
+// Only archived assets can be restored.
+func (s *Service) Restore(ctx context.Context, req *assetmodel.ChangeStateRequest) error {
+	if err := req.Validate(); err != nil {
+		return serviceerrors.NewValidationFailedError(err)
+	}
+
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		asset, err := s.getInTx(ctx, txRepo, []string{
+			"id", "status", "upload_status",
+		}, assetSearchOptions{
+			AssetID: req.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if asset.Status != assetmodel.StatusArchived {
+			return serviceerrors.NewConflictError("only archived assets can be restored")
+		}
+
+		adminID, err := parsing.StrToUUID(req.AdminID)
+		if err != nil {
+			return err
+		}
+
+		if _, err := txRepo.Restore(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}, types.AuditTrailOptions{
+			AdminID:   adminID,
+			AdminName: req.AdminName,
+			Note:      req.Note,
+		}); err != nil {
+			s.logger.Error("failed to restore asset", zap.Error(err), zap.String("asset_id", req.ID))
+			return fmt.Errorf("failed to restore asset: %w", err)
+		}
+		return nil
+	})
+}
+
+// GeneratePlaybackToken generates a signed JWT playback token for secure video playback.
+func (s *Service) GeneratePlaybackToken(ctx context.Context, req *assetmodel.GeneratePlaybackTokenRequest) (string, error) {
+	if err := req.Validate(); err != nil {
+		return "", serviceerrors.NewValidationFailedError(err)
+	}
+	asset, err := s.repo.Get(ctx, assetrepo.GetOptions{
+		ID: req.AssetID,
+		Fields: []string{
+			"id", "status", "upload_status", "primary_signed_playback_id",
+		},
+	}, assetrepo.ScopeAll)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", serviceerrors.NewNotFoundError(err)
+		}
+		s.logger.Error("failed to retrieve asset for playback token generation", zap.Error(err), zap.String("asset_id", req.AssetID.String()))
+		return "", fmt.Errorf("failed to retrieve asset for playback token generation: %w", err)
+	}
+	if asset.Status != assetmodel.StatusActive {
+		return "", serviceerrors.NewConflictError("playback token can only be generated for active assets")
+	}
+	if asset.UploadStatus != assetmodel.UploadStatusReady {
+		return "", serviceerrors.NewConflictError("playback token can only be generated for assets with ready upload status")
+	}
+	if asset.PrimarySignedPlaybackID == nil {
+		s.logger.Error("asset does not have a signed playback ID for token generation", zap.String("asset_id", req.AssetID.String()))
+		return "", serviceerrors.NewConflictError("asset does not have a signed playback ID for token generation")
+	}
+	return s.apiClient.GeneratePlaybackJWTToken(apiclient.GeneratePlaybackTokenOptions{
+		UserID:     req.UserID,
+		PlaybackID: *asset.PrimarySignedPlaybackID,
+		Expiration: req.Expiration,
+		UserAgent:  req.UserAgent,
+		SessionID:  req.SessionID,
+	})
 }

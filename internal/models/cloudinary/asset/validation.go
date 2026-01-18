@@ -1,212 +1,108 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 // Package asset provides models, DTO models for [cloudinary.Service] requests and validation tools.
 package asset
 
 import (
-	"errors"
+	"reflect"
+	"sync"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/go-ozzo/ozzo-validation/v4/is"
-	"github.com/google/uuid"
-	"github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
+	"github.com/mikhail5545/media-service-go/internal/util/formatting"
+	"github.com/mikhail5545/media-service-go/internal/util/parsing"
+	validationutil "github.com/mikhail5545/media-service-go/internal/util/validation"
 )
 
-// Validate validates fields of [asset.CreateSignedUploadURLRequest].
-// All request fields except eager are required for this operation.
-// Validation rules:
-//
-//   - Eager: optional.
-//   - File: required, at least 3 characters.
-//   - PublicID: required, at least 3 characters.
+func (req GetFilter) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+	)
+}
+
+func (req ListRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.IDs, validation.Each(validationutil.UUIDRule(false)...)),
+		validation.Field(&req.CloudinaryAssetIDs, validation.Each(validation.Length(1, 255))),
+		validation.Field(&req.CloudinaryPublicIDs, validation.Each(validation.Length(1, 255))),
+		validation.Field(&req.ResourceTypes, validation.Each(validation.Length(3, 50),
+			validation.In("image", "video", "raw", "folder")),
+		),
+		validation.Field(&req.Formats, validation.Each(validation.Length(2, 20),
+			validation.In("img", "jpg", "png", "mp4", "mov", "pdf", "docx", "zip")),
+		),
+		validation.Field(&req.OrderField, validation.In(OrderCreatedAt, OrderUpdatedAt, OrderFormat, OrderResourceType)),
+		validation.Field(&req.OrderDir, validation.In(OrderAscending, OrderDescending)),
+		validation.Field(&req.PageSize, validation.Min(1), validation.Max(1000)),
+		validation.Field(&req.PageToken, validation.Length(1, 2048)),
+	)
+}
+
+func (req ChangeStateRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminName, validation.Length(1, 128)),
+		validation.Field(&req.Note, validation.Length(10, 512)),
+	)
+}
+
+func (req ManageOwnerRequest) Validate() error {
+	return validation.ValidateStruct(&req,
+		validation.Field(&req.ID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.OwnerID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.OwnerType, validation.Required, validation.Length(1, 50), validation.In("product")),
+	)
+}
+
 func (req CreateSignedUploadURLRequest) Validate() error {
 	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.File,
-			validation.Required,
-			validation.Length(3, 0),
-		),
-		validation.Field(
-			&req.PublicID,
-			validation.Required,
-			validation.Length(3, 0),
-		),
+		validation.Field(&req.File, validation.Required, validation.Length(3, 0)),
+		validation.Field(&req.PublicID, validation.Required, validation.Length(3, 0)),
+		validation.Field(&req.Eager, validation.Length(0, 255)),
 	)
 }
 
-// Validate validates fields of [asset.AssociateRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - OwnerID: required, valid UUID.
-//   - OwnerType: required, min 3 characters, max 128 characters, one of: ["course_part"].
-func (req AssociateRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerType,
-			validation.Required,
-			validation.Length(1, 128),
-			validation.In("course_part"),
-		),
-	)
-}
-
-// Validate validates fields of [asset.DeassociateRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - OwnerID: required, valid UUID.
-//   - OwnerType: required, min 3 characters, max 128 characters, one of: ["course_part"].
-func (req DeassociateRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.OwnerType,
-			validation.Required,
-			validation.Length(1, 128),
-			validation.In("course_part"),
-		),
-	)
-}
-
-// Validate validates fields of [asset.UpdateOwnersRequest].
-// All request fields are required for this operation.
-// Validation rules:
-//
-//   - ID: required, valid UUID.
-//   - Owners: required, slice of [metamodel.Owner], each must have a valid UUID and valid OwnerType.
-func (req UpdateOwnersRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.Owners,
-			validation.Required,
-			validation.Length(1, 0),
-			validation.Each(
-				validation.By(
-					func(value interface{}) error {
-						if owner, ok := value.(metadata.Owner); ok {
-							if _, err := uuid.Parse(owner.OwnerID); err != nil {
-								return errors.New("must be a valid uuid")
-							}
-							if len(owner.OwnerType) <= 3 {
-								return errors.New("must be at least 4 characters long")
-							}
-						}
-						return nil
-					},
-				),
-			),
-		),
-	)
-}
-
-func (req DestroyAssetRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.ID,
-			validation.Required,
-			is.UUID,
-		),
-		validation.Field(
-			&req.ResourceType,
-			validation.Required,
-			validation.Length(3, 0),
-		),
-	)
-}
-
-func (req CleanupOrphanAssetsRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(
-			&req.Folder,
-			validation.Required,
-			validation.Length(1, 255),
-		),
-		validation.Field(
-			&req.AssetType,
-			validation.Required,
-			validation.Length(3, 0),
-		),
-	)
-}
-
-// Validate validates fields of [asset.SuccessfulUploadRequest].
-// All request fields except Owners are required for this operation.
-// Validation rules:
-//
-//   - CloudinaryAssetID: required.
-//   - CloudinaryPublicID: required, at least 3 characters, max 255 characters.
-//   - SecureURL: required, valid URL.
-//   - AssetFolder: required, at least 3 characters, max 255 characters.
-//   - DisplayName: required, at least 3 characters, max 255 characters.
-//   - Owners: optional, slice of [metamodel.Owner], if populated, each must have a valid UUID and valid OwnerType.
 func (req SuccessfulUploadRequest) Validate() error {
 	return validation.ValidateStruct(&req,
-		validation.Field(&req.CloudinaryAssetID, validation.Required),
-		validation.Field(&req.CloudinaryPublicID, validation.Required, validation.Length(3, 255)),
-		validation.Field(&req.SecureURL, validation.Required, is.URL),
-		validation.Field(&req.AssetFolder, validation.Required, validation.Length(3, 255)),
-		validation.Field(&req.DisplayName, validation.Required, validation.Length(3, 255)),
-		validation.Field(
-			&req.Owners,
-			validation.When(len(req.Owners) > 0,
-				validation.Each(
-					validation.By(
-						func(value any) error {
-							if owner, ok := value.(metadata.Owner); ok {
-								if _, err := uuid.Parse(owner.OwnerID); err != nil {
-									return errors.New("must be a valid uuid")
-								}
-								if len(owner.OwnerType) <= 3 {
-									return errors.New("must be at least 4 characters long")
-								}
-							}
-							return nil
-						},
-					),
-				),
-			),
-		),
+		validation.Field(&req.DisplayName, validation.Required, validation.Length(1, 255)),
+		validation.Field(&req.AssetFolder, validation.Length(0, 128)),
+		validation.Field(&req.CloudinaryAssetID, validation.Required, validation.Length(1, 255)),
+		validation.Field(&req.CloudinaryPublicID, validation.Required, validation.Length(1, 255)),
+		validation.Field(&req.URL, validation.Required, validation.Length(1, 2048)),
+		validation.Field(&req.SecureURL, validation.Required, validation.Length(1, 2048)),
+		validation.Field(&req.ResourceType, validation.Required, validation.Length(3, 50),
+			validation.In("image", "video", "raw")),
+		validation.Field(&req.Format, validation.Required, validation.Length(2, 20),
+			validation.In("img", "jpg", "png", "mp4", "mov", "pdf", "docx", "zip")),
+		validation.Field(&req.Width, validation.Min(1)),
+		validation.Field(&req.Height, validation.Min(1)),
 	)
+}
+
+var (
+	validFields     map[string]bool
+	validFieldsOnce sync.Once
+)
+
+// ValidFields returns all valid field names for the Asset struct.
+func ValidFields() map[string]bool {
+	validFieldsOnce.Do(func() {
+		validFields := make(map[string]bool)
+		t := reflect.TypeOf(Asset{})
+
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if tag := field.Tag.Get("gorm"); tag != "" {
+				if col := parsing.ParseColumnTag(tag); col != "" {
+					validFields[col] = true
+					continue
+				}
+			}
+			validFields[formatting.ToSnakeCase(field.Name)] = true
+		}
+	})
+	return validFields
+}
+
+// IsValidField checks if a field name is valid for selection.
+func IsValidField(field string) bool {
+	return ValidFields()[field]
 }
