@@ -14,7 +14,7 @@ func NewPostgresDB(ctx context.Context, dsn string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = db.AutoMigrate(
+	err = db.WithContext(ctx).AutoMigrate(
 		&muxassetmodel.Asset{},
 		&cldassetmodel.Asset{},
 	)

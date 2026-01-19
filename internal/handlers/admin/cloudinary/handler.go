@@ -43,12 +43,12 @@ type Handler interface {
 }
 
 type AdminHandler struct {
-	service cldservice.Service
+	service *cldservice.Service
 }
 
 var _ Handler = (*AdminHandler)(nil)
 
-func New(svc cldservice.Service) *AdminHandler {
+func New(svc *cldservice.Service) *AdminHandler {
 	return &AdminHandler{
 		service: svc,
 	}

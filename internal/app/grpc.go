@@ -15,21 +15,4 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package cloudinary
-
-import cldservice "github.com/mikhail5545/media-service-go/internal/services/cloudinary"
-
-type Handler interface {
-}
-
-var _ Handler = (*PublicHandler)(nil)
-
-type PublicHandler struct {
-	service *cldservice.Service
-}
-
-func New(svc *cldservice.Service) *PublicHandler {
-	return &PublicHandler{
-		service: svc,
-	}
-}
+package app

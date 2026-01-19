@@ -71,22 +71,20 @@ type AssetService interface {
 
 // Service implements the AssetService interface for managing MUX assets.
 type Service struct {
-	repo                     *assetrepo.Repository
-	metadataRepo             *assetmetadatarepo.Repository
-	lessonVideoVersionClient *client.LessonVideoVersionServiceClient
-	videoClient              *client.VideoServiceClient
-	apiClient                *apiclient.Client
-	logger                   *zap.Logger
+	repo         *assetrepo.Repository
+	metadataRepo *assetmetadatarepo.Repository
+	videoClient  *client.VideoServiceClient
+	apiClient    *apiclient.Client
+	logger       *zap.Logger
 }
 
 var _ AssetService = (*Service)(nil)
 
 type NewParams struct {
-	Repo                     *assetrepo.Repository
-	MetadataRepo             *assetmetadatarepo.Repository
-	LessonVideoVersionClient *client.LessonVideoVersionServiceClient
-	VideoClient              *client.VideoServiceClient
-	ApiClient                *apiclient.Client
+	Repo         *assetrepo.Repository
+	MetadataRepo *assetmetadatarepo.Repository
+	VideoClient  *client.VideoServiceClient
+	ApiClient    *apiclient.Client
 }
 
 func New(
@@ -94,12 +92,11 @@ func New(
 	logger *zap.Logger,
 ) *Service {
 	return &Service{
-		repo:                     params.Repo,
-		lessonVideoVersionClient: params.LessonVideoVersionClient,
-		videoClient:              params.VideoClient,
-		metadataRepo:             params.MetadataRepo,
-		apiClient:                params.ApiClient,
-		logger:                   logger.With(zap.String("layer", "service"), zap.String("service", "mux")),
+		repo:         params.Repo,
+		videoClient:  params.VideoClient,
+		metadataRepo: params.MetadataRepo,
+		apiClient:    params.ApiClient,
+		logger:       logger.With(zap.String("layer", "service"), zap.String("service", "mux")),
 	}
 }
 

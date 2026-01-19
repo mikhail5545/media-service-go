@@ -15,21 +15,21 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package mux
+package app
 
-import muxservice "github.com/mikhail5545/media-service-go/internal/services/mux"
+import (
+	"context"
+	"fmt"
+)
 
-type Handler interface {
+type SecretProvider interface {
+	Resolve(ctx context.Context, ref string) (string, error)
 }
 
-type PublicHandler struct {
-	service *muxservice.Service
-}
-
-var _ Handler = (*PublicHandler)(nil)
-
-func New(svc *muxservice.Service) *PublicHandler {
-	return &PublicHandler{
-		service: svc,
+func getSecret(ctx context.Context, sp SecretProvider, ref string) (string, error) {
+	secret, err := sp.Resolve(ctx, ref)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve secret form secret provider: %w", err)
 	}
+	return secret, nil
 }

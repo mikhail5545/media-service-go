@@ -15,30 +15,40 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package mux
+package cloudinary
 
 import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	muxtypes "github.com/mikhail5545/media-service-go/internal/models/mux/types"
-	muxservice "github.com/mikhail5545/media-service-go/internal/services/mux"
+	cldservice "github.com/mikhail5545/media-service-go/internal/services/cloudinary"
 )
 
 type WebhookHandler struct {
-	service *muxservice.Service
+	service *cldservice.Service
 }
 
-func New(svc *muxservice.Service) *WebhookHandler {
+func New(svc *cldservice.Service) *WebhookHandler {
 	return &WebhookHandler{
 		service: svc,
 	}
 }
 
 func (h *WebhookHandler) Handle(c echo.Context) error {
-	var payload muxtypes.MuxWebhook
-	if err := c.Bind(&payload); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	var body []byte
+	n, err := c.Request().Body.Read(body)
+	if n == 0 || err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	return h.service.HandleAssetWebhook(c.Request().Context(), &payload)
+
+	timestamp := c.Request().Header.Get("X-Cld-Timestamp")
+	if timestamp == "" {
+		return echo.NewHTTPError(http.StatusForbidden, "missing X-Cld-Timestamp header")
+	}
+	signature := c.Request().Header.Get("X-Cld-Signature")
+	if signature == "" {
+		return echo.NewHTTPError(http.StatusForbidden, "missing X-Cld-Signature header")
+	}
+
+	return h.service.HandleUploadWebhook(c.Request().Context(), body, timestamp, signature)
 }
