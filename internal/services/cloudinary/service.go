@@ -59,10 +59,6 @@ type AssetService interface {
 	// It returns the signed parameters required for the upload, end client must build signed upload
 	// URL using generated parameters.
 	CreateSignedUploadURL(ctx context.Context, req *assetmodel.CreateSignedUploadURLRequest) (*assetmodel.GeneratedSignedParams, error)
-	// SuccessfulUpload handles the successful upload notification about successful asset upload. End client
-	// must call this method after receiving upload success response from Cloudinary.
-	// It creates a new asset record in the database with the provided details.
-	SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error)
 	// Archive marks an asset as archived.
 	// Note that only assets without any owners can be archived.
 	Archive(ctx context.Context, req *assetmodel.ChangeStateRequest) error
@@ -85,9 +81,9 @@ type AssetService interface {
 	// It also deletes the asset from Cloudinary.
 	// Note that only currently soft-deleted (archived) assets can be permanently deleted.
 	Delete(ctx context.Context, req *assetmodel.ChangeStateRequest) error
-	// HandleUploadWebhook processes incoming webhook notifications from Cloudinary regarding asset uploads.
-	// It verifies the webhook signature and updates the asset status accordingly.
-	HandleUploadWebhook(ctx context.Context, payload []byte, timestamp, signature string) error
+	// HandleWebhook processes incoming webhook notifications from Cloudinary.
+	// It validates the signature and routes the webhook to the appropriate handler based on its type.
+	HandleWebhook(ctx context.Context, payload []byte, timestamp, signature string) error
 }
 
 type Service struct {
@@ -169,6 +165,37 @@ func (s *Service) CreateSignedUploadURL(ctx context.Context, req *assetmodel.Cre
 	if err := req.Validate(); err != nil {
 		return nil, serviceerrors.NewValidationFailedError(err)
 	}
+
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txRepo := s.repo.WithTx(tx)
+
+		adminID, err := parsing.StrToUUID(req.AdminID)
+		if err != nil {
+			return err
+		}
+		asset := &assetmodel.Asset{
+			CloudinaryPublicID: req.PublicID,
+			Status:             assetmodel.StatusUploadURLGenerated,
+			CreatedByName:      &req.AdminName,
+			CreatedBy:          &adminID,
+		}
+
+		if err := txRepo.Create(ctx, asset); err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return serviceerrors.NewAlreadyExistsError("asset with the given public ID already exists")
+			}
+			s.logger.Error("failed to create asset record for signed upload URL",
+				zap.String("public_id", req.PublicID),
+				zap.String("admin_id", req.AdminID),
+				zap.String("admin_name", req.AdminName),
+				zap.Error(err),
+			)
+			return fmt.Errorf("failed to create asset record for signed upload URL: %w", err)
+		}
+
+		return nil
+	})
+
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	params := make(url.Values)
 
@@ -195,54 +222,6 @@ func (s *Service) CreateSignedUploadURL(ctx context.Context, req *assetmodel.Cre
 		Timestamp: timestamp,
 		Eager:     req.Eager,
 	}, nil
-}
-
-// SuccessfulUpload handles the successful upload notification about successful asset upload. End client
-// must call this method after receiving upload success response from Cloudinary.
-// It creates a new asset record in the database with the provided details.
-func (s *Service) SuccessfulUpload(ctx context.Context, req *assetmodel.SuccessfulUploadRequest) (*assetmodel.Asset, error) {
-	if err := req.Validate(); err != nil {
-		return nil, serviceerrors.NewValidationFailedError(err)
-	}
-
-	var newAsset *assetmodel.Asset
-	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
-		txRepo := s.repo.WithTx(tx)
-
-		newAsset = &assetmodel.Asset{
-			CloudinaryAssetID:  req.CloudinaryAssetID,
-			CloudinaryPublicID: req.CloudinaryPublicID,
-			ResourceType:       req.ResourceType,
-			Format:             req.Format,
-			Width:              req.Width,
-			Height:             req.Height,
-			URL:                req.URL,
-			SecureURL:          req.SecureURL,
-			AssetFolder:        req.AssetFolder,
-			DisplayName:        req.DisplayName,
-			Status:             assetmodel.StatusActive,
-		}
-
-		if err := txRepo.Create(ctx, newAsset); err != nil {
-			return fmt.Errorf("failed to create new asset: %w", err)
-		}
-
-		metadata := &metadatamodel.AssetMetadata{
-			Key:    newAsset.ID.String(),
-			Owners: []metadatamodel.Owner{}, // No owners by default
-		}
-		if err := s.metadataRepo.Create(ctx, metadata); err != nil {
-			s.logger.Error("failed to create asset metadata after successful upload",
-				zap.Error(err), zap.String("asset_id", newAsset.ID.String()))
-			return fmt.Errorf("failed to create asset metadata after successful upload: %w", err)
-		}
-
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return newAsset, nil
 }
 
 // Archive marks an asset as archived.

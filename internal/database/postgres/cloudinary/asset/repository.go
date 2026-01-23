@@ -43,10 +43,11 @@ func (r *Repository) WithTx(tx *gorm.DB) *Repository {
 type Scope uint
 
 const (
-	ScopeAll      Scope = iota
-	ScopeActive   Scope = iota
-	ScopeArchived Scope = iota
-	ScopeBroken   Scope = iota
+	ScopeAll                Scope = iota
+	ScopeUploadURLGenerated Scope = iota
+	ScopeActive             Scope = iota
+	ScopeArchived           Scope = iota
+	ScopeBroken             Scope = iota
 )
 
 type Filter struct {

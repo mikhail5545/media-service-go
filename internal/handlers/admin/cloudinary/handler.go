@@ -33,7 +33,6 @@ type Handler interface {
 	ListArchived(c echo.Context) error
 	ListBroken(c echo.Context) error
 	CreateSignedUploadURL(c echo.Context) error
-	SuccessfulUpload(c echo.Context) error
 	Archive(c echo.Context) error
 	Restore(c echo.Context) error
 	Delete(c echo.Context) error
@@ -80,10 +79,6 @@ func (h *AdminHandler) ListBroken(c echo.Context) error {
 
 func (h *AdminHandler) CreateSignedUploadURL(c echo.Context) error {
 	return generic.Handle(c, h.service.CreateSignedUploadURL, http.StatusOK, "generated")
-}
-
-func (h *AdminHandler) SuccessfulUpload(c echo.Context) error {
-	return generic.Handle(c, h.service.SuccessfulUpload, http.StatusCreated, "asset")
 }
 
 func (h *AdminHandler) Archive(c echo.Context) error {

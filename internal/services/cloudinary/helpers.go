@@ -228,16 +228,29 @@ func (s *Service) deleteMetadata(ctx context.Context, assetID uuid.UUID) error {
 	return nil
 }
 
-func (s *Service) getByAssetID(ctx context.Context, txRepo *assetrepo.Repository, cloudinaryAssetID string) (*assetmodel.Asset, error) {
+func (s *Service) getByPublicID(ctx context.Context, txRepo *assetrepo.Repository, cloudinaryPublicID string) (*assetmodel.Asset, error) {
 	asset, err := txRepo.Get(ctx, assetrepo.GetOptions{
-		CloudinaryAssetID: cloudinaryAssetID,
+		CloudinaryAssetID: cloudinaryPublicID,
 	})
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, serviceerrors.NewNotFoundError(err)
 		}
-		s.logger.Error("failed to retrieve asset by Cloudinary Asset ID", zap.Error(err), zap.String("cloudinary_asset_id", cloudinaryAssetID))
-		return nil, fmt.Errorf("failed to retrieve asset by Cloudinary Asset ID: %w", err)
+		s.logger.Error("failed to retrieve asset by Cloudinary Public ID", zap.Error(err), zap.String("cloudinary_public_id", cloudinaryPublicID))
+		return nil, fmt.Errorf("failed to retrieve asset by Cloudinary Public ID: %w", err)
 	}
 	return asset, nil
+}
+
+func (s *Service) listByPublicIDs(ctx context.Context, txRepo *assetrepo.Repository, cloudinaryPublicIDs []string, scopes ...assetrepo.Scope) ([]*assetmodel.Asset, error) {
+	if len(cloudinaryPublicIDs) == 0 {
+		return []*assetmodel.Asset{}, nil
+	}
+	assets, err := txRepo.ListAll(ctx, assetrepo.ListAllOptions{
+		CloudinaryPublicIDs: cloudinaryPublicIDs,
+	}, scopes...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list assets by Cloudinary Public IDs: %w", err)
+	}
+	return assets, nil
 }

@@ -368,3 +368,23 @@ func (s *Service) deleteMetadataAndMuxAsset(ctx context.Context, assetID *uuid.U
 	}
 	return nil
 }
+
+func (s *Service) deleteMetadataOnWebhook(ctx context.Context, assetID uuid.UUID, payload *muxtypes.MuxWebhook) error {
+	metadata, err := s.getAssetMetadata(ctx, assetID)
+	if err != nil {
+		return err
+	}
+	if len(metadata.Owners) > 0 {
+		// Notify Product Service to remove ownership references
+	}
+	if err := s.deleteMetadata(ctx, assetID); err != nil {
+		s.logger.Warn(
+			"failed to delete asset metadata from webhook",
+			zap.Error(err),
+			zap.String("asset_id", assetID.String()),
+			zap.String("event_id", payload.ID),
+		)
+		return err
+	}
+	return nil
+}

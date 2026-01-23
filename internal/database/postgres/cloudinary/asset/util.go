@@ -26,12 +26,16 @@ func extractScopes(scopes []Scope) []cldassetmodel.Status {
 	if len(scopes) > 0 {
 		if slices.Contains(scopes, ScopeAll) {
 			statuses = []cldassetmodel.Status{
+				cldassetmodel.StatusUploadURLGenerated,
 				cldassetmodel.StatusActive,
 				cldassetmodel.StatusArchived,
 				cldassetmodel.StatusBroken,
 			}
 		}
 		statuses = make([]cldassetmodel.Status, 0, len(scopes))
+		if slices.Contains(scopes, ScopeUploadURLGenerated) {
+			statuses = append(statuses, cldassetmodel.StatusUploadURLGenerated)
+		}
 		if slices.Contains(scopes, ScopeActive) {
 			statuses = append(statuses, cldassetmodel.StatusActive)
 		}

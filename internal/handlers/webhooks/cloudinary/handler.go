@@ -50,5 +50,5 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusForbidden, "missing X-Cld-Signature header")
 	}
 
-	return h.service.HandleUploadWebhook(c.Request().Context(), body, timestamp, signature)
+	return h.service.HandleWebhook(c.Request().Context(), body, timestamp, signature)
 }
