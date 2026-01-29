@@ -29,10 +29,7 @@ import (
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/mux/asset"
 	metadatamodel "github.com/mikhail5545/media-service-go/internal/models/mux/metadata"
 	muxtypes "github.com/mikhail5545/media-service-go/internal/models/mux/types"
-	bytesutil "github.com/mikhail5545/media-service-go/internal/util/bytes"
-	errutil "github.com/mikhail5545/media-service-go/internal/util/errors"
 	"github.com/mikhail5545/media-service-go/internal/util/parsing"
-	videopbv1 "github.com/mikhail5545/product-service-client/pb/proto/product_service/video/v1"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -228,52 +225,6 @@ func (s *Service) archiveAsset(ctx context.Context, txRepo *assetrepo.Repository
 	return nil
 }
 
-func (s *Service) grpcMarkAsBroken(ctx context.Context, assetID, adminID uuid.UUID, req *assetmodel.ChangeStateRequest) error {
-	assetIDBytes, err := bytesutil.UUIDToBytes(&assetID)
-	if err != nil {
-		return err
-	}
-	adminIDBytes, err := bytesutil.UUIDToBytes(&adminID)
-	if err != nil {
-		return err
-	}
-	if _, err := s.videoClient.BrokenVideo(ctx, &videopbv1.BrokenVideoRequest{
-		MediaServiceUuid: assetIDBytes,
-		AdminUuid:        adminIDBytes,
-		AdminName:        req.AdminName,
-		Reason:           req.Note,
-	}); err != nil {
-		s.logger.Error("failed to mark asset as broken via gRPC", zap.Error(err), zap.String("asset_id", req.ID))
-		return errutil.HandleRPCError(err)
-	}
-	return nil
-}
-
-func (s *Service) deleteMetadata(ctx context.Context, assetID uuid.UUID) error {
-	if err := s.metadataRepo.Delete(ctx, assetID.String()); err != nil {
-		s.logger.Error("failed to delete asset metadata", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return fmt.Errorf("failed to delete asset metadata: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) updateMetadataFromWebhook(ctx context.Context, assetID uuid.UUID, data *muxtypes.MuxWebhookData) error {
-	if len(data.Tracks) == 0 {
-		return nil
-	}
-	metadata, err := s.getAssetMetadata(ctx, assetID)
-	if err != nil {
-		return err
-	}
-
-	metadata.Tracks = data.Tracks
-	if err := s.metadataRepo.Update(ctx, assetID.String(), metadata); err != nil {
-		s.logger.Error("failed to update asset metadata from webhook", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return fmt.Errorf("failed to update asset metadata from webhook: %w", err)
-	}
-	return nil
-}
-
 func (s *Service) checkOwnership(ctx context.Context, owner *metadatamodel.Owner, assetID uuid.UUID) error {
 	_, findErr := s.metadataRepo.GetByOwner(ctx, assetID.String(), owner)
 	if findErr == nil {
@@ -288,46 +239,6 @@ func (s *Service) checkOwnership(ctx context.Context, owner *metadatamodel.Owner
 			zap.String("owner_type", owner.OwnerType),
 		)
 		return fmt.Errorf("failed to check existing owner in asset metadata: %w", findErr)
-	}
-	return nil
-}
-
-func (s *Service) addOwner(ctx context.Context, assetID uuid.UUID, req *assetmodel.ManageOwnerRequest) error {
-	metadata, err := s.getAssetMetadata(ctx, assetID)
-	if err != nil {
-		return err
-	}
-
-	newOwner := metadatamodel.Owner{
-		OwnerID:   req.OwnerID,
-		OwnerType: req.OwnerType,
-	}
-	if err := s.checkOwnership(ctx, &newOwner, assetID); err != nil {
-		return err
-	}
-	metadata.Owners = append(metadata.Owners, newOwner)
-
-	if err := s.metadataRepo.Update(ctx, assetID.String(), metadata); err != nil {
-		s.logger.Error("failed to add owner to asset metadata", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return fmt.Errorf("failed to add owner to asset metadata: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) removeOwner(ctx context.Context, metadata *metadatamodel.AssetMetadata, req *assetmodel.ManageOwnerRequest) error {
-	currentOwners := metadata.Owners
-	for i, owner := range currentOwners {
-		if owner.OwnerID == req.OwnerID && owner.OwnerType == req.OwnerType {
-			// Remove owner from slice
-			metadata.Owners = append(currentOwners[:i], currentOwners[i+1:]...)
-			break
-		}
-	}
-	if err := s.metadataRepo.Update(ctx, metadata.Key, metadata); err != nil {
-		s.logger.Error("failed to remove owner from asset metadata",
-			zap.Error(err), zap.String("owner_id", req.OwnerID), zap.String("owner_type", req.OwnerType),
-		)
-		return fmt.Errorf("failed to remove owner from asset metadata: %w", err)
 	}
 	return nil
 }
@@ -357,7 +268,7 @@ func (s *Service) archiveAssetOnWebhook(ctx context.Context, txRepo *assetrepo.R
 func (s *Service) deleteMetadataAndMuxAsset(ctx context.Context, assetID *uuid.UUID, muxAssetID *string) error {
 	switch {
 	case assetID != nil:
-		if err := s.deleteMetadata(ctx, *assetID); err != nil {
+		if err := s.deleteAssetMetadata(ctx, *assetID); err != nil {
 			return err
 		}
 	case muxAssetID != nil:
@@ -369,22 +280,14 @@ func (s *Service) deleteMetadataAndMuxAsset(ctx context.Context, assetID *uuid.U
 	return nil
 }
 
-func (s *Service) deleteMetadataOnWebhook(ctx context.Context, assetID uuid.UUID, payload *muxtypes.MuxWebhook) error {
-	metadata, err := s.getAssetMetadata(ctx, assetID)
+func (s *Service) markAsBrokenAndClearOwners(ctx context.Context, assetID *uuid.UUID, metadata *metadatamodel.AssetMetadata, req *assetmodel.ChangeStateRequest) error {
+	adminID, err := parsing.StrToUUID(req.AdminID)
 	if err != nil {
 		return err
 	}
-	if len(metadata.Owners) > 0 {
-		// Notify Product Service to remove ownership references
-	}
-	if err := s.deleteMetadata(ctx, assetID); err != nil {
-		s.logger.Warn(
-			"failed to delete asset metadata from webhook",
-			zap.Error(err),
-			zap.String("asset_id", assetID.String()),
-			zap.String("event_id", payload.ID),
-		)
+	if err := s.grpcMarkAsBroken(ctx, assetID, &adminID, req); err != nil {
 		return err
 	}
-	return nil
+	metadata.Owners = []*metadatamodel.Owner{}
+	return s.metadataRepo.Update(ctx, metadata.Key, metadata)
 }

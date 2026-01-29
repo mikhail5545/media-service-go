@@ -284,6 +284,19 @@ func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateR
 			return serviceerrors.NewConflictError("asset is already marked as broken")
 		}
 
+		adminID, err := parsing.StrToUUID(req.AdminID)
+		if err != nil {
+			return err
+		}
+		if _, err := txRepo.MarkAsBroken(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}, &types.AuditTrailOptions{
+			AdminID:   adminID,
+			AdminName: req.AdminName,
+			Note:      req.Note,
+		}); err != nil {
+			s.logger.Error("failed to mark asset as broken", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to mark asset as broken: %w", err)
+		}
+
 		metadata, err := s.getAssetMetadata(ctx, asset.ID)
 		if err != nil {
 			return err

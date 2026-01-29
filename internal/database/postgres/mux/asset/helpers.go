@@ -228,3 +228,26 @@ func (r *Repository) delete(ctx context.Context, filter *Filter) (int64, error) 
 	res := db.Delete(&muxassetmodel.Asset{})
 	return res.RowsAffected, res.Error
 }
+
+func (r *Repository) markAsBroken(ctx context.Context, filter *Filter, auditOpts *types.AuditTrailOptions) (int64, error) {
+	cleanFilter(filter)
+	if !hasIdentifyingFilters(filter) {
+		return 0, fmt.Errorf("filter does not contain identifying fields")
+	}
+	if err := filter.Validate(); err != nil {
+		return 0, fmt.Errorf("invalid filter: %w", err)
+	}
+	if err := auditOpts.Validate(); err != nil {
+		return 0, fmt.Errorf("invalid audit trail options: %w", err)
+	}
+
+	db := r.db.WithContext(ctx).Unscoped().Model(&muxassetmodel.Asset{})
+	db = applyIdentifyingFilters(db, filter)
+	db = applySpecificFilters(db, filter)
+
+	db = db.Where("status <> ?", muxassetmodel.StatusBroken) // only mark non-broken records
+
+	updates := markAsBrokenUpdates(auditOpts)
+	res := db.Updates(updates)
+	return res.RowsAffected, res.Error
+}

@@ -20,3 +20,11 @@ package memory
 func MakePtr[T any](v T) *T {
 	return &v
 }
+
+func SlicePtr[T any](vals ...T) []*T {
+	dst := make([]*T, len(vals))
+	for i := range vals {
+		dst[i] = &vals[i]
+	}
+	return dst
+}

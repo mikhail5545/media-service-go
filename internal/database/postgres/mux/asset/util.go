@@ -161,6 +161,15 @@ func archiveUpdates(opts *types.AuditTrailOptions) map[string]any {
 	}
 }
 
+func markAsBrokenUpdates(opts *types.AuditTrailOptions) map[string]any {
+	return map[string]any{
+		"marked_as_broken_by":      opts.AdminID,
+		"marked_as_broken_by_name": opts.AdminName,
+		"status":                   muxassetmodel.StatusBroken,
+		"note":                     opts.Note,
+	}
+}
+
 func populateFromStateOperationOptions(opts StateOperationOptions) *Filter {
 	return &Filter{
 		IDs:             opts.IDs,

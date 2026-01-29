@@ -33,6 +33,7 @@ type GormRepository interface {
 	// Delete permanently deletes mux asset matching the provided state operation options.
 	// Only currently soft-deleted (archived) assets can be permanently deleted.
 	Delete(ctx context.Context, opts StateOperationOptions) (int64, error)
+	MarkAsBroken(ctx context.Context, opts StateOperationOptions, auditOpts types.AuditTrailOptions) (int64, error)
 }
 
 type Repository struct {
@@ -203,4 +204,8 @@ func (r *Repository) Archive(ctx context.Context, opts StateOperationOptions, au
 // Only currently soft-deleted (archived) assets can be permanently deleted.
 func (r *Repository) Delete(ctx context.Context, opts StateOperationOptions) (int64, error) {
 	return r.delete(ctx, populateFromStateOperationOptions(opts))
+}
+
+func (r *Repository) MarkAsBroken(ctx context.Context, opts StateOperationOptions, auditOpts types.AuditTrailOptions) (int64, error) {
+	return r.markAsBroken(ctx, populateFromStateOperationOptions(opts), &auditOpts)
 }

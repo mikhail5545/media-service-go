@@ -194,8 +194,8 @@ func (s *Service) CreateUploadURL(ctx context.Context, req *assetmodel.CreateUpl
 			Key:       newAssetID.String(),
 			Title:     req.Title,
 			CreatorID: req.AdminID,
-			Owners:    []metadatamodel.Owner{},      // initialize empty owners slice
-			Tracks:    []muxtypes.MuxWebhookTrack{}, // initialize empty tracks slice
+			Owners:    []*metadatamodel.Owner{},      // initialize empty owners slice
+			Tracks:    []*muxtypes.MuxWebhookTrack{}, // initialize empty tracks slice
 		}
 
 		if err := s.metadataRepo.Create(ctx, metadata); err != nil {
@@ -258,7 +258,9 @@ func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateR
 		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+	var toMarkAsBroken *uuid.UUID
+	var metadataToDelete *metadatamodel.AssetMetadata
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.repo.WithTx(tx)
 
 		asset, err := s.getInTx(ctx, txRepo, []string{
@@ -270,22 +272,39 @@ func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateR
 			return serviceerrors.NewConflictError("asset is already marked as broken")
 		}
 
+		adminID, err := parsing.StrToUUID(req.AdminID)
+		if err != nil {
+			return err
+		}
+		if _, err := txRepo.MarkAsBroken(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{asset.ID}}, types.AuditTrailOptions{
+			AdminID:   adminID,
+			AdminName: req.AdminName,
+			Note:      req.Note,
+		}); err != nil {
+			s.logger.Error("failed to mark asset as broken", zap.Error(err), zap.String("asset_id", asset.ID.String()))
+			return fmt.Errorf("failed to mark asset as broken: %w", err)
+		}
+
 		metadata, err := s.getAssetMetadata(ctx, asset.ID)
 		if err != nil {
 			return err
 		}
 
-		adminID, err := parsing.StrToUUID(req.AdminID)
-		if err != nil {
-			return err
-		}
 		if len(metadata.Owners) > 0 {
-			if err := s.grpcMarkAsBroken(ctx, asset.ID, adminID, req); err != nil {
-				return err
-			}
+			toMarkAsBroken = &asset.ID
+			metadataToDelete = metadata
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if toMarkAsBroken != nil {
+		if err := s.markAsBrokenAndClearOwners(ctx, toMarkAsBroken, metadataToDelete, req); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Delete permanently deletes an archived asset along with its metadata.
