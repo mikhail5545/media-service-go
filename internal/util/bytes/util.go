@@ -31,6 +31,17 @@ func UUIDToBytes(id *uuid.UUID) ([]byte, error) {
 	return id.MarshalBinary()
 }
 
+func StrUUIDToBytes(id string) ([]byte, error) {
+	if id == "" {
+		return nil, nil
+	}
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return nil, err
+	}
+	return uid.MarshalBinary()
+}
+
 func ToUUID(id []byte) (uuid.UUID, error) {
 	if len(id) == 0 {
 		return uuid.Nil, nil

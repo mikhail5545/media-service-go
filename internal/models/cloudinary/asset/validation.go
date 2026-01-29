@@ -55,25 +55,11 @@ func (req ManageOwnerRequest) Validate() error {
 func (req CreateSignedUploadURLRequest) Validate() error {
 	return validation.ValidateStruct(&req,
 		validation.Field(&req.File, validation.Required, validation.Length(3, 0)),
-		validation.Field(&req.PublicID, validation.Required, validation.Length(3, 0)),
+		validation.Field(&req.PublicID, validation.Required, validation.Length(3, 1024)),
 		validation.Field(&req.Eager, validation.Length(0, 255)),
-	)
-}
-
-func (req SuccessfulUploadRequest) Validate() error {
-	return validation.ValidateStruct(&req,
-		validation.Field(&req.DisplayName, validation.Required, validation.Length(1, 255)),
-		validation.Field(&req.AssetFolder, validation.Length(0, 128)),
-		validation.Field(&req.CloudinaryAssetID, validation.Required, validation.Length(1, 255)),
-		validation.Field(&req.CloudinaryPublicID, validation.Required, validation.Length(1, 255)),
-		validation.Field(&req.URL, validation.Required, validation.Length(1, 2048)),
-		validation.Field(&req.SecureURL, validation.Required, validation.Length(1, 2048)),
-		validation.Field(&req.ResourceType, validation.Required, validation.Length(3, 50),
-			validation.In("image", "video", "raw")),
-		validation.Field(&req.Format, validation.Required, validation.Length(2, 20),
-			validation.In("img", "jpg", "png", "mp4", "mov", "pdf", "docx", "zip")),
-		validation.Field(&req.Width, validation.Min(1)),
-		validation.Field(&req.Height, validation.Min(1)),
+		validation.Field(&req.AdminID, validationutil.UUIDRule(true)...),
+		validation.Field(&req.AdminName, validation.Required, validation.Length(1, 128)),
+		validation.Field(&req.Note, validation.Length(0, 512)),
 	)
 }
 

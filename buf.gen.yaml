@@ -3,7 +3,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/mikhail5545/media-service/pb
+      value: github.com/mikhail5545/media-service-go/pb
 plugins:
   - remote: buf.build/protocolbuffers/go
     out: .

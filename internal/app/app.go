@@ -1,154 +1,177 @@
-// github.com/mikhail5545/media-service-go
-// microservice for vitianmove project family
-// Copyright (C) 2025  Mikhail Kulik
-
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU Affero General Public License as published
-// by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Affero General Public License for more details.
-
-// You should have received a copy of the GNU Affero General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+/*
+ * Copyright (c) 2026. Mikhail Kulik
+ *
+ * This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU Affero General Public License as published
+ *  by the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 
 package app
 
 import (
 	"context"
-	"fmt"
-	"log"
-	"net"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/joho/godotenv"
+	"github.com/1password/onepassword-sdk-go"
 	"github.com/labstack/echo/v4"
-	cldapi "github.com/mikhail5545/media-service-go/internal/clients/cloudinary"
-	muxapi "github.com/mikhail5545/media-service-go/internal/clients/mux"
-	"github.com/mikhail5545/media-service-go/internal/database"
-	"github.com/mikhail5545/media-service-go/internal/database/arango"
-	arangocldmetadata "github.com/mikhail5545/media-service-go/internal/database/arango/cloudinary/metadata"
-	arangomuxmetadata "github.com/mikhail5545/media-service-go/internal/database/arango/mux/metadata"
-	cldassetrepo "github.com/mikhail5545/media-service-go/internal/database/cloudinary/asset"
-	muxassetrepo "github.com/mikhail5545/media-service-go/internal/database/mux/asset"
-	muxdetailrepo "github.com/mikhail5545/media-service-go/internal/database/mux/detail"
-	"github.com/mikhail5545/media-service-go/internal/routers"
-	cldserver "github.com/mikhail5545/media-service-go/internal/server/cloudinary"
-	muxserver "github.com/mikhail5545/media-service-go/internal/server/mux"
-	cldservice "github.com/mikhail5545/media-service-go/internal/services_outdated/cloudinary"
-	muxservice "github.com/mikhail5545/media-service-go/internal/services_outdated/mux"
-	imageclient "github.com/mikhail5545/product-service-go/pkg/client/image"
-	videoclient "github.com/mikhail5545/product-service-go/pkg/client/video"
+	"github.com/mikhail5545/media-service-go/internal/app/credentials"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"gorm.io/gorm"
 )
 
-func Startup(ctx context.Context) {
-	const grpcPort = 50053
-	const httpPort = 8083
-	grpcListenAddr := fmt.Sprintf(":%d", grpcPort)
+type App struct {
+	Cfg         *Config
+	manager     *credentials.Manager
+	logger      *zap.Logger
+	postgresDB  *gorm.DB
+	mongoDB     *mongo.Database
+	opClient    *onepassword.Client
+	repos       *Repositories
+	apiClients  *ApiClients
+	services    *Services
+	grpcClients *GRPCClients
+	cleanup     func()
+}
 
-	err := godotenv.Load()
+func New(ctx context.Context, cfg *Config) (*App, error) {
+	logger, cleanup, err := newLogger(cfg.Log)
 	if err != nil {
-		log.Fatal("Error loading .env file")
-		os.Exit(1)
+		return nil, err
 	}
 
-	// Load .env variables
-	DBHost := os.Getenv("POSTGRES_HOST")
-	DBPort := os.Getenv("POSTGRES_PORT")
-	DBUser := os.Getenv("POSTGRES_USER")
-	DBPassword := os.Getenv("POSTGRES_PASSWORD")
-	DBName := os.Getenv("POSTGRES_DB")
-
-	videoClientAddr := os.Getenv("VIDEO_SERVICE_ADDR")
-	imageClientAddr := os.Getenv("IMAGE_SERVICE_ADDR")
-	arangoDBEndpoints := strings.Split(os.Getenv("ARANGO_DB_ENDPOINTS"), "|")
-
-	// Init postgres db connection
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", DBHost, DBPort, DBUser, DBPassword, DBName)
-
-	db, err := database.NewPostgresDB(context.Background(), dsn)
+	token := os.Getenv("OP_SERVICE_ACCOUNT_TOKEN")
+	manager, err := credentials.New(
+		ctx,
+		credentials.LoadSources(),
+		token,
+		logger,
+	)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %s", err.Error())
-		os.Exit(1)
+		return nil, err
 	}
 
-	log.Println("Database connection established.")
+	return &App{
+		Cfg:     cfg,
+		manager: manager,
+		logger:  logger,
+		cleanup: cleanup,
+	}, nil
+}
 
-	// Init arango DB connection
-	arangoDB, err := arango.NewArangoDB(ctx, arangoDBEndpoints)
+func (a *App) Init(ctx context.Context) error {
+	if err := a.manager.ResolveAll(ctx); err != nil {
+		return err
+	}
+
+	postgresDB, err := a.setupPostgresDB(ctx)
 	if err != nil {
-		log.Fatalf("failed to connect to arango db: %s", err.Error())
-		os.Exit(1)
+		return err
 	}
-
-	cldMetadataRepo := arangocldmetadata.New(arangoDB)
-	if err := cldMetadataRepo.EnsureCollection(ctx, arangoDB); err != nil {
-		log.Fatalf("Failed to ensure ArangoDB collection for cloudinary metadata: %s", err.Error())
-	}
-	muxMetadataRepo := arangomuxmetadata.New(arangoDB)
-	if err := cldMetadataRepo.EnsureCollection(ctx, arangoDB); err != nil {
-		log.Fatalf("Failed to ensure ArangoDB collection for mux metadata: %s", err.Error())
-	}
-	log.Println("ArangoDB collections initialized.")
-
-	// Create instances of required clients
-	muxClient, err := muxapi.NewMUXClient()
+	mongoDB, err := a.setupMongoDB(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create MUX client: %s", err.Error())
-		os.Exit(1)
+		return err
 	}
-	cldClient, err := cldapi.NewCloudinaryClient()
+
+	repos := a.setupRepositories()
+
+	apiClients, err := a.setupApiClients()
 	if err != nil {
-		log.Fatalf("Failed to create Cloudinary client: %s", err.Error())
-		os.Exit(1)
+		return err
 	}
 
-	// Connect to required gRPC clients
-	videoSvcClient, err := videoclient.New(ctx, videoClientAddr)
-	imageSvcClient, err := imageclient.New(ctx, imageClientAddr)
+	grpcClients, err := a.setupGRPCClients(ctx)
+	if err != nil {
+		return err
+	}
 
-	// Create instances of required repositories
-	muxRepo := muxassetrepo.New(db)
-	muxDetailRepo := muxdetailrepo.New(db)
-	cldRepo := cldassetrepo.New(db)
+	services := a.setupServices(repos, apiClients, grpcClients, a.logger)
 
-	// Create instances of required services
-	muxService := muxservice.New(muxRepo, muxMetadataRepo, muxDetailRepo, muxClient, videoSvcClient)
-	cldService := cldservice.New(cldClient, cldRepo, cldMetadataRepo, imageSvcClient)
+	a.postgresDB = postgresDB
+	a.mongoDB = mongoDB
+	a.repos = repos
+	a.apiClients = apiClients
+	a.services = services
 
-	// --- Start gRPC server ---
-	go func() {
-		lis, err := net.Listen("tcp", grpcListenAddr)
-		if err != nil {
-			log.Fatalf("Failed to listen: %s", err.Error())
-			os.Exit(1)
-		}
-		grpcServer := grpc.NewServer()
+	return nil
+}
 
-		muxserver.Register(grpcServer, muxService)
-		cldserver.Register(grpcServer, cldService)
+func (a *App) Run(ctx context.Context) error {
+	grpcServer, listener, err := a.prepareGRPCServer()
+	if err != nil {
+		return err
+	}
 
-		log.Printf("gRPC server listening on %s", grpcListenAddr)
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatalf("Failed to serve gRPC server: %s", err.Error())
-			os.Exit(1)
-		}
-	}()
+	grpcErrChan := make(chan error, 1)
+	go runGRPCServer(grpcErrChan, grpcServer, listener, a.logger)
 
-	// --- Start HTTP server ---
 	e := echo.New()
+	integrateWithEcho(e, a.logger)
+	setupRouters(e, a.services)
 
-	// Setup router
-	routers.SetupRouter(e, muxService, cldService)
+	httpErrChan := make(chan error, 1)
+	go runHTTPServer(e, a.Cfg.HTTP.Port, a.logger, httpErrChan)
 
-	httpListenAddr := fmt.Sprintf(":%d", httpPort)
-	if err := e.Start(httpListenAddr); err != nil {
-		log.Fatalf("Failed to start HTTP server: %v", err)
-		os.Exit(1)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+	select {
+	case sig := <-quit:
+		a.logger.Info("received shutdown signal", zap.String("signal", sig.String()))
+	case <-ctx.Done():
+		a.logger.Info("received shutdown signal via context cancellation")
+	case err := <-grpcErrChan:
+		a.logger.Error("gRPC server stopped unexpectedly with an error", zap.Error(err))
+	case err := <-httpErrChan:
+		a.logger.Error("gRPC server stopped unexpectedly with an error", zap.Error(err))
 	}
+
+	a.gracefulShutdown(e, grpcServer, a.logger)
+	return nil
+}
+
+func (a *App) gracefulShutdown(e *echo.Echo, grpcServer *grpc.Server, logger *zap.Logger) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(a.Cfg.GracefulShutdownTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	shutdownHTTPServer(shutdownCtx, e, logger)
+
+	done := make(chan struct{})
+	go shutdownGRPCServer(grpcServer, done)
+
+	select {
+	case <-done:
+		logger.Info("gRPC server shutdown complete")
+	case <-shutdownCtx.Done():
+		logger.Warn("gRPC graceful shutdown timed out, forcing stop")
+		grpcServer.Stop()
+	}
+}
+
+func (a *App) Close() error {
+	if a.cleanup != nil {
+		a.cleanup()
+	}
+	if a.grpcClients != nil {
+		if err := a.grpcClients.VideoSvcClient.Close(); err != nil {
+			return err
+		}
+		if err := a.grpcClients.ImageSvcClient.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

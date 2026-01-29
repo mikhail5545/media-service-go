@@ -159,10 +159,9 @@ func (s *Service) handleAssetDeletedWebhook(ctx context.Context, payload *muxtyp
 		return nil
 	})
 	if err == nil && assetIDtoDelete != nil {
-		// Delete asset metadata from MongoDB after successful transaction commit.
-		if err := s.deleteMetadata(ctx, *assetIDtoDelete); err != nil {
+		if err := s.deleteMetadataOnWebhook(ctx, *assetIDtoDelete, payload); err != nil {
 			s.logger.Warn(
-				"failed to delete asset metadata after asset deletion webhook",
+				"failed to delete asset metadata on deleted webhook",
 				zap.Error(err),
 				zap.String("asset_id", assetIDtoDelete.String()),
 				zap.String("event_id", payload.ID),

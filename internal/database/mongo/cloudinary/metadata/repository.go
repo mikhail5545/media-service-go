@@ -19,6 +19,7 @@ type MongoRepository interface {
 	ListUnownedIDs(ctx context.Context) ([]string, error)
 	List(ctx context.Context) ([]*metadata.AssetMetadata, error)
 	ListByKeys(ctx context.Context, keys []string) (map[string]*metadata.AssetMetadata, error)
+	DeleteByKeys(ctx context.Context, keys []string) (int64, error)
 }
 
 type Repository struct {
@@ -159,4 +160,14 @@ func (r *Repository) ListByKeys(ctx context.Context, keys []string) (map[string]
 		return nil, err
 	}
 	return metadataMap, nil
+}
+
+func (r *Repository) DeleteByKeys(ctx context.Context, keys []string) (int64, error) {
+	collection := r.db.Collection(r.collectionName)
+	filter := bson.D{{Key: "_id", Value: bson.D{{Key: "$in", Value: keys}}}}
+	res, err := collection.DeleteMany(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	return res.DeletedCount, err
 }

@@ -34,7 +34,6 @@ func buildUpdatesFromWebhook(existing *assetmodel.Asset, webhook *assetmodel.Clo
 	patch.UpdateIfChanged(updates, "format", &webhook.Format, &existing.Format)
 	patch.UpdateIfChanged(updates, "width", &webhook.Width, existing.Width)
 	patch.UpdateIfChanged(updates, "height", &webhook.Height, existing.Height)
-	patch.UpdateIfChanged(updates, "public_id", &webhook.PublicID, &existing.CloudinaryPublicID)
 	patch.UpdateIfChanged(updates, "resource_type", &webhook.ResourceType, &existing.ResourceType)
 
 	if len(webhook.Tags) > 0 && !reflect.DeepEqual(webhook.Tags, existing.Tags) {

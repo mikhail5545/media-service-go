@@ -19,9 +19,6 @@ package app
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
-	"os"
 	"time"
 
 	"github.com/mikhail5545/product-service-client/client"
@@ -33,41 +30,30 @@ type GRPCClients struct {
 	ImageSvcClient *client.ImageServiceClient
 }
 
-func setupGRPCClients(ctx context.Context, videoSvcAddr, imageSvcAddr string, logger *zap.Logger) (*GRPCClients, error) {
+func (a *App) setupGRPCClients(ctx context.Context) (*GRPCClients, error) {
 	videoClient, err := client.NewVideoServiceClient(client.WithTimeout(10, time.Second))
 	if err != nil {
-		logger.Error("failed to create Video Service gRPC client", zap.Error(err))
+		a.logger.Error("failed to create Video Service gRPC client", zap.Error(err))
 		return nil, err
 	}
 	imageClient, err := client.NewImageServiceClient(client.WithTimeout(10, time.Second))
 	if err != nil {
-		logger.Error("failed to create Image Service gRPC client", zap.Error(err))
+		a.logger.Error("failed to create Image Service gRPC client", zap.Error(err))
 		return nil, err
 	}
 
-	// Connect to Server
-	pool := x509.NewCertPool()
-	caPEM, err := os.ReadFile("/config/certs/ca.pem")
-	if err != nil {
-		logger.Error("failed to read CA certificate", zap.Error(err))
+	if err := videoClient.Connect(ctx,
+		a.manager.Credentials.GRPCClient.Address,
+		client.WithTransportCredentials(a.manager.Credentials.GRPCClient.Credentials),
+	); err != nil {
+		a.logger.Error("failed to connect to Video Service gRPC server", zap.Error(err))
 		return nil, err
 	}
-	pool.AppendCertsFromPEM(caPEM)
-	clientCert, err := tls.LoadX509KeyPair("/config/certs/client.crt", "/config/certs/client.key")
-	if err != nil {
-		logger.Error("failed to load client certificate", zap.Error(err))
-		return nil, err
-	}
-	tlsConfig := &tls.Config{
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{clientCert},
-	}
-	if err := videoClient.Connect(ctx, videoSvcAddr, client.WithTLSConfig(tlsConfig)); err != nil {
-		logger.Error("failed to connect to Video Service gRPC server", zap.Error(err))
-		return nil, err
-	}
-	if err := imageClient.Connect(ctx, imageSvcAddr, client.WithTLSConfig(tlsConfig)); err != nil {
-		logger.Error("failed to connect to Image Service gRPC server", zap.Error(err))
+	if err := imageClient.Connect(ctx,
+		a.manager.Credentials.GRPCClient.Address,
+		client.WithTransportCredentials(a.manager.Credentials.GRPCClient.Credentials),
+	); err != nil {
+		a.logger.Error("failed to connect to Image Service gRPC server", zap.Error(err))
 		return nil, err
 	}
 	return &GRPCClients{

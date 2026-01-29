@@ -54,9 +54,12 @@ type ManageOwnerRequest struct {
 }
 
 type CreateSignedUploadURLRequest struct {
-	Eager    *string `json:"eager"`
-	PublicID string  `json:"public_id"`
-	File     string  `json:"file"`
+	Eager     *string `json:"eager"`
+	PublicID  string  `json:"public_id"`
+	File      string  `json:"file"`
+	AdminID   string  `json:"admin_id"`
+	AdminName string  `json:"admin_name"`
+	Note      string  `json:"note"`
 }
 
 type GeneratedSignedParams struct {
@@ -73,19 +76,6 @@ type ChangeStateRequest struct {
 	AdminID   string `json:"admin_id"`
 	AdminName string `json:"admin_name"`
 	Note      string `json:"note"`
-}
-
-type SuccessfulUploadRequest struct {
-	CloudinaryAssetID  string `json:"cloudinary_asset_id"`
-	CloudinaryPublicID string `json:"cloudinary_public_id"`
-	ResourceType       string `json:"resource_type"`
-	Format             string `json:"format"`
-	Width              *int   `json:"width"`
-	Height             *int   `json:"height"`
-	URL                string `json:"url"`
-	SecureURL          string `json:"secure_url"`
-	AssetFolder        string `json:"asset_folder"`
-	DisplayName        string `json:"display_name"`
 }
 
 // CloudinaryUploadWebhook represents Cloudinary API webhook triggered by an asset upload.
@@ -163,4 +153,9 @@ type UpdateVal struct {
 	Name     string `json:"name"`
 	OldValue string `json:"old_value"`
 	NewValue string `json:"new_value"`
+}
+
+type CloudinaryDeleteWebhook struct {
+	NotificationType string     `json:"notification_type"`
+	Resources        []Resource `json:"resources"`
 }

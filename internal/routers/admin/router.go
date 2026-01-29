@@ -93,7 +93,6 @@ func (r *RouterImpl) setupCloudinaryRoutes(group *echo.Group) {
 			assets.GET("/archived", handler.ListArchived)
 			assets.GET("/broken", handler.ListBroken)
 			assets.POST("/upload/url-gen", handler.CreateSignedUploadURL)
-			assets.POST("/upload/success", handler.SuccessfulUpload)
 			assets.DELETE("/archive/:id", handler.Archive)
 			assets.POST("/restore/:id", handler.Restore)
 			assets.DELETE("/:id", handler.Delete)
