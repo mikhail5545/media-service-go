@@ -20,20 +20,19 @@ package app
 type Config struct {
 	HTTP                           HTTPConfig
 	GRPC                           GRPCConfig
+	GRPCClient                     GRPCClientConfig
 	Log                            LogConfig
-	GracefulShutdownTimeoutSeconds int
-	PostgresDB                     PostgresDBConfig
 	MongoDB                        MongoDBConfig
+	GracefulShutdownTimeoutSeconds int
 	Mux                            MuxAPIConfig
-	Cloudinary                     CloudinaryAPIConfig
 }
 
 type HTTPConfig struct {
-	Port int
+	Port int64
 }
 
 type GRPCConfig struct {
-	Port int
+	Port int64
 }
 
 type LogConfig struct {
@@ -42,30 +41,15 @@ type LogConfig struct {
 	AppName      string
 }
 
-type PostgresDBConfig struct {
-	HostRef     string
-	PortRef     string
-	UserRef     string
-	PasswordRef string
-	DBNameRef   string
+type MuxAPIConfig struct {
+	TestMode   bool
+	CORSOrigin string
 }
 
 type MongoDBConfig struct {
-	ConnectionStringRef string
+	DbName string
 }
 
-type MuxAPIConfig struct {
-	APIKeyRef                string
-	SecretKeyRef             string
-	SigningKeyIDRef          string
-	SigningKeyPrivateRef     string
-	PlaybackRestrictionIDRef string
-	TestMode                 bool
-	CORSOrigin               string
-}
-
-type CloudinaryAPIConfig struct {
-	CloudNameRef string
-	APIKeyRef    string
-	APISecretRef string
+type GRPCClientConfig struct {
+	Address string
 }

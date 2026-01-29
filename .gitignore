@@ -23,6 +23,16 @@
 *.cfg
 config
 
+# OpenSSL certificates
+cert
+certs
+certificates
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+
 # Dependency directories (remove the comment below to include it)
 # vendor/
 

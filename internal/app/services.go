@@ -28,7 +28,7 @@ type Services struct {
 	CldSvc *cldservice.Service
 }
 
-func setupServices(repos *Repositories, apiClients *ApiClients, grpcClients *GRPCClients, logger *zap.Logger) *Services {
+func (a *App) setupServices(repos *Repositories, apiClients *ApiClients, grpcClients *GRPCClients, logger *zap.Logger) *Services {
 	return &Services{
 		MuxSvc: muxservice.New(
 			&muxservice.NewParams{

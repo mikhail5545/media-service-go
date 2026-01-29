@@ -21,7 +21,8 @@ const (
 )
 
 type GetFilter struct {
-	ID string `param:"id" json:"-"`
+	ID           string       `param:"id" json:"-"`
+	UploadStatus UploadStatus `query:"upload_status" json:"upload_status"`
 }
 
 type ListRequest struct {

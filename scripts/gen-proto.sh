@@ -10,7 +10,7 @@ fi
 OUT_DIR=$(mktemp -d)
 trap 'rm -rf "${OUT_DIR}"' EXIT
 
-buf generate --template buf.gen.yaml --output "${OUT_DIR}"
+buf generate buf.build/vitainmove/protos --template buf.gen.yaml --output "${OUT_DIR}"
 
 rm -rf pb_tmp || true
 mv "${OUT_DIR}" pb_tmp

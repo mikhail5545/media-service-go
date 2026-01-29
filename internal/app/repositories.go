@@ -41,6 +41,15 @@ type MongoRepositories struct {
 	CldMetaRepo *cldmetarepo.Repository
 }
 
+func (a *App) setupRepositories() *Repositories {
+	postgresRepos := setupPostgresRepositories(a.postgresDB)
+	mongoRepos := setupMongoRepositories(a.mongoDB)
+	return &Repositories{
+		Postgres: postgresRepos,
+		Mongo:    mongoRepos,
+	}
+}
+
 func setupPostgresRepositories(db *gorm.DB) *PostgresRepositories {
 	return &PostgresRepositories{
 		MuxRepo: muxassetrepo.New(db),

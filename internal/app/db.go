@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 
+	mongodb "github.com/mikhail5545/media-service-go/internal/database/mongo"
 	"github.com/mikhail5545/media-service-go/internal/database/postgres"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -28,60 +29,33 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupPostgresDB(ctx context.Context, sp SecretProvider, logger *zap.Logger, dbCfg PostgresDBConfig) (*gorm.DB, error) {
-	host, err := getSecret(ctx, sp, dbCfg.HostRef)
-	if err != nil {
-		return nil, err
-	}
-	port, err := getSecret(ctx, sp, dbCfg.PortRef)
-	if err != nil {
-		return nil, err
-	}
-	user, err := getSecret(ctx, sp, dbCfg.UserRef)
-	if err != nil {
-		return nil, err
-	}
-	password, err := getSecret(ctx, sp, dbCfg.PasswordRef)
-	if err != nil {
-		return nil, err
-	}
-	dbName, err := getSecret(ctx, sp, dbCfg.DBNameRef)
-	if err != nil {
-		return nil, err
-	}
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbName)
-	logger.Info("database DSN prepared", zap.String("host", host), zap.String("port", port), zap.String("user", user))
+func (a *App) setupPostgresDB(ctx context.Context) (*gorm.DB, error) {
+	pgCfg := a.manager.Credentials.PostgresDB
+	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", pgCfg.Host, pgCfg.Port, pgCfg.User, pgCfg.User, pgCfg.Password)
+	a.logger.Info("database DSN prepared", zap.String("dsn", dsn))
+
 	db, err := postgres.NewPostgresDB(ctx, dsn)
 	if err != nil {
-		logger.Error("Failed to connect to database", zap.Error(err))
+		a.logger.Error("Failed to connect to database", zap.Error(err))
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
-	logger.Info("database connection established.")
+	a.logger.Info("database connection established.")
 	return db, nil
 }
 
-func setupMongoClient(ctx context.Context, sp SecretProvider, logger *zap.Logger, mongoCfg MongoDBConfig) (*mongo.Client, error) {
-	uri, err := getSecret(ctx, sp, mongoCfg.ConnectionStringRef)
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("MongoDB URI string resolved")
+func (a *App) setupMongoDB(ctx context.Context) (*mongo.Database, error) {
 	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
-	opts := options.Client().ApplyURI(uri).SetServerAPIOptions(serverAPI)
+	opts := options.Client().ApplyURI(a.manager.Credentials.MongoDB.ConnectionString).SetServerAPIOptions(serverAPI)
 	client, err := mongo.Connect(opts)
 	if err != nil {
-		logger.Error("Failed to connect to MongoDB", zap.Error(err))
+		a.logger.Error("Failed to connect to MongoDB", zap.Error(err))
 		return nil, err
 	}
-	return client, nil
-}
 
-func basicDBConfig() PostgresDBConfig {
-	return PostgresDBConfig{
-		HostRef:     "op://Development/Postgres/server",
-		PortRef:     "op://Development/Postgres/port",
-		UserRef:     "op://Development/Postgres/username",
-		PasswordRef: "op://Development/Postgres/password",
-		DBNameRef:   "op://Development/Postgres/database",
+	db, err := mongodb.NewMongoDB(ctx, client, a.manager.Credentials.MongoDB.DBName)
+	if err != nil {
+		a.logger.Error("Failed to ping MongoDB", zap.Error(err))
+		return nil, err
 	}
+	return db, nil
 }

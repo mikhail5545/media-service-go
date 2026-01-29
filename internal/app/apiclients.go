@@ -18,8 +18,6 @@
 package app
 
 import (
-	"context"
-
 	cldapiclient "github.com/mikhail5545/media-service-go/internal/apiclients/cloudinary"
 	muxapiclient "github.com/mikhail5545/media-service-go/internal/apiclients/mux"
 	"go.uber.org/zap"
@@ -30,15 +28,15 @@ type ApiClients struct {
 	CldClient *cldapiclient.Client
 }
 
-func setupApiClients(ctx context.Context, cfg *Config, sp SecretProvider, logger *zap.Logger) (*ApiClients, error) {
-	muxClient, err := setupMuxApi(ctx, cfg, sp)
+func (a *App) setupApiClients() (*ApiClients, error) {
+	muxClient, err := a.setupMuxApi()
 	if err != nil {
-		logger.Error("failed to setup Mux API client", zap.Error(err))
+		a.logger.Error("failed to setup Mux API client", zap.Error(err))
 		return nil, err
 	}
-	cldClient, err := setupCloudinaryApi(ctx, cfg, sp)
+	cldClient, err := a.setupCloudinaryApi()
 	if err != nil {
-		logger.Error("failed to setup Cloudinary API client", zap.Error(err))
+		a.logger.Error("failed to setup Cloudinary API client", zap.Error(err))
 		return nil, err
 	}
 	return &ApiClients{
@@ -47,55 +45,23 @@ func setupApiClients(ctx context.Context, cfg *Config, sp SecretProvider, logger
 	}, nil
 }
 
-func setupMuxApi(ctx context.Context, cfg *Config, sp SecretProvider) (*muxapiclient.Client, error) {
-	muxApiKey, err := getSecret(ctx, sp, cfg.Mux.APIKeyRef)
-	if err != nil {
-		return nil, err
-	}
-	muxSecretKey, err := getSecret(ctx, sp, cfg.Mux.SecretKeyRef)
-	if err != nil {
-		return nil, err
-	}
-	muxSigningKeyID, err := getSecret(ctx, sp, cfg.Mux.SigningKeyIDRef)
-	if err != nil {
-		return nil, err
-	}
-	muxSingingKeyPrivate, err := getSecret(ctx, sp, cfg.Mux.SigningKeyPrivateRef)
-	if err != nil {
-		return nil, err
-	}
-	muxPlaybackRestrictionID, err := getSecret(ctx, sp, cfg.Mux.PlaybackRestrictionIDRef)
-	if err != nil {
-		return nil, err
-	}
+func (a *App) setupMuxApi() (*muxapiclient.Client, error) {
 	muxClient, err := muxapiclient.New(
-		muxApiKey,
-		muxSecretKey,
-		muxapiclient.WithSigningKey(muxSigningKeyID, muxSingingKeyPrivate),
-		muxapiclient.WithCORSOrigin(cfg.Mux.CORSOrigin),
-		muxapiclient.WithTestMode(cfg.Mux.TestMode),
-		muxapiclient.WithPlaybackRestrictionID(muxPlaybackRestrictionID),
+		a.manager.Credentials.MuxAPI.APIToken,
+		a.manager.Credentials.MuxAPI.SecretKey,
+		muxapiclient.WithSigningKey(a.manager.Credentials.MuxAPI.SigningKeyID, a.manager.Credentials.MuxAPI.SigningKeyPrivate),
+		muxapiclient.WithCORSOrigin(a.Cfg.Mux.CORSOrigin),
+		muxapiclient.WithTestMode(a.Cfg.Mux.TestMode),
+		muxapiclient.WithPlaybackRestrictionID(a.manager.Credentials.MuxAPI.PlaybackRestrictionID),
 	)
 	return muxClient, err
 }
 
-func setupCloudinaryApi(ctx context.Context, cfg *Config, sp SecretProvider) (*cldapiclient.Client, error) {
-	cloudName, err := getSecret(ctx, sp, cfg.Cloudinary.CloudNameRef)
-	if err != nil {
-		return nil, err
-	}
-	apiKey, err := getSecret(ctx, sp, cfg.Cloudinary.APIKeyRef)
-	if err != nil {
-		return nil, err
-	}
-	apiSecret, err := getSecret(ctx, sp, cfg.Cloudinary.APISecretRef)
-	if err != nil {
-		return nil, err
-	}
+func (a *App) setupCloudinaryApi() (*cldapiclient.Client, error) {
 	cldClient, err := cldapiclient.New(
-		cloudName,
-		apiKey,
-		apiSecret,
+		a.manager.Credentials.CloudinaryAPI.CloudName,
+		a.manager.Credentials.CloudinaryAPI.APIKey,
+		a.manager.Credentials.CloudinaryAPI.APISecret,
 	)
 	return cldClient, err
 }
