@@ -42,7 +42,9 @@ jobs:
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
       - name: Generate pb to pb_tmp
-        run: chmod +x scripts/gen-proto.sh && make proto-gen
+        run: |
+          chmod +x scripts/gen-proto.sh
+          ./scripts/gen-proto.sh make proto-gen
 
       - name: Compare generated pb to pb_tmp
         run: |
