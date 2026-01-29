@@ -20,6 +20,7 @@ type GormRepository interface {
 	Archive(ctx context.Context, opts StateOperationOptions, auditOpts *types.AuditTrailOptions) (int64, error)
 	Restore(ctx context.Context, opts StateOperationOptions, auditOpts *types.AuditTrailOptions) (int64, error)
 	Delete(ctx context.Context, opts StateOperationOptions) (int64, error)
+	MarkAsBroken(ctx context.Context, opts StateOperationOptions, auditOpts *types.AuditTrailOptions) (int64, error)
 }
 
 type Repository struct {
@@ -163,4 +164,8 @@ func (r *Repository) Restore(ctx context.Context, opts StateOperationOptions, au
 
 func (r *Repository) Delete(ctx context.Context, opts StateOperationOptions) (int64, error) {
 	return r.delete(ctx, populateFromStateOperationOptions(&opts))
+}
+
+func (r *Repository) MarkAsBroken(ctx context.Context, opts StateOperationOptions, auditOpts *types.AuditTrailOptions) (int64, error) {
+	return r.markAsBroken(ctx, populateFromStateOperationOptions(&opts), auditOpts)
 }

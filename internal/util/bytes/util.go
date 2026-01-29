@@ -74,6 +74,26 @@ func SliceToUUIDStrings(data [][]byte) ([]string, error) {
 	return out, nil
 }
 
+func SliceStringsToUUIDBytes(data []string) ([][]byte, error) {
+	if len(data) == 0 {
+		return nil, nil // Return nil for empty input to avoid allocating empty slice
+	}
+
+	out := make([][]byte, 0, len(data))
+	for i, s := range data {
+		uid, err := uuid.Parse(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid uuid string at index %d: %w", i, err)
+		}
+		b, err := uid.MarshalBinary()
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal uuid at index %d: %w", i, err)
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 func uuidBytesToString(data []byte) (string, error) {
 	if len(data) != 16 {
 		return "", fmt.Errorf("invalid uuid length: %d", len(data))

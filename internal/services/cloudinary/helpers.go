@@ -24,12 +24,11 @@ import (
 
 	"github.com/google/uuid"
 	assetrepo "github.com/mikhail5545/media-service-go/internal/database/postgres/cloudinary/asset"
+	"github.com/mikhail5545/media-service-go/internal/database/types"
 	serviceerrors "github.com/mikhail5545/media-service-go/internal/errors"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
 	metadatamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
-	bytesutil "github.com/mikhail5545/media-service-go/internal/util/bytes"
 	"github.com/mikhail5545/media-service-go/internal/util/parsing"
-	imagepbv1 "github.com/mikhail5545/product-service-client/pb/proto/product_service/image/v1"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -47,18 +46,6 @@ func (s *Service) getAsset(ctx context.Context, assetID uuid.UUID, scopes []asse
 		return nil, fmt.Errorf("failed to retrieve asset: %w", err)
 	}
 	return asset, nil
-}
-
-func (s *Service) getAssetMetadata(ctx context.Context, assetID uuid.UUID) (*metadatamodel.AssetMetadata, error) {
-	metadata, err := s.metadataRepo.Get(ctx, assetID.String())
-	if err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, serviceerrors.NewNotFoundError(err)
-		}
-		s.logger.Error("failed to retrieve asset metadata", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return nil, fmt.Errorf("failed to retrieve asset metadata: %w", err)
-	}
-	return metadata, nil
 }
 
 func (s *Service) get(ctx context.Context, filter *assetmodel.GetFilter, scopes []assetrepo.Scope) (*assetmodel.Details, error) {
@@ -143,23 +130,24 @@ func (s *Service) getInTx(ctx context.Context, txRepo *assetrepo.Repository, id 
 	return asset, nil
 }
 
-func (s *Service) grpcRemoveAssociations(ctx context.Context, asset *assetmodel.Asset, metadata *metadatamodel.AssetMetadata) error {
-	if len(metadata.Owners) > 0 {
-		metadata.Owners = []metadatamodel.Owner{}
-	}
-
-	assetIDBytes, err := bytesutil.UUIDToBytes(&asset.ID)
+func (s *Service) markAsBroken(ctx context.Context, txRepo *assetrepo.Repository, assetID uuid.UUID, req *assetmodel.ChangeStateRequest) error {
+	adminID, err := parsing.StrToUUID(req.AdminID)
 	if err != nil {
 		return err
 	}
-	if _, err := s.imageServiceClient.Delete(ctx, &imagepbv1.DeleteRequest{
-		MediaServiceUuid: assetIDBytes,
+	if _, err := txRepo.MarkAsBroken(ctx, assetrepo.StateOperationOptions{IDs: uuid.UUIDs{assetID}}, &types.AuditTrailOptions{
+		AdminID:   adminID,
+		AdminName: req.AdminName,
+		Note:      req.Note,
 	}); err != nil {
-		s.logger.Error("failed to delete image associations via gRPC", zap.Error(err), zap.String("asset_id", asset.ID.String()))
-		return fmt.Errorf("failed to delete image associations via gRPC: %w", err)
+		s.logger.Error("failed to mark asset as broken", zap.Error(err), zap.String("asset_id", assetID.String()))
+		return fmt.Errorf("failed to mark asset as broken: %w", err)
 	}
-
-	return s.metadataRepo.Update(ctx, metadata.Key, metadata)
+	// make gRPC call to remove associations
+	if err := s.grpcMarkAsBroken(ctx, &assetID, &adminID, req); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) checkOwnership(ctx context.Context, owner *metadatamodel.Owner, assetID uuid.UUID) error {
@@ -176,54 +164,6 @@ func (s *Service) checkOwnership(ctx context.Context, owner *metadatamodel.Owner
 			zap.String("owner_type", owner.OwnerType),
 		)
 		return fmt.Errorf("failed to check existing owner in asset metadata: %w", findErr)
-	}
-	return nil
-}
-
-func (s *Service) addOwner(ctx context.Context, assetID uuid.UUID, req *assetmodel.ManageOwnerRequest) error {
-	metadata, err := s.getAssetMetadata(ctx, assetID)
-	if err != nil {
-		return err
-	}
-
-	newOwner := metadatamodel.Owner{
-		OwnerID:   req.OwnerID,
-		OwnerType: req.OwnerType,
-	}
-	if err := s.checkOwnership(ctx, &newOwner, assetID); err != nil {
-		return err
-	}
-	metadata.Owners = append(metadata.Owners, newOwner)
-
-	if err := s.metadataRepo.Update(ctx, assetID.String(), metadata); err != nil {
-		s.logger.Error("failed to add owner to asset metadata", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return fmt.Errorf("failed to add owner to asset metadata: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) removeOwner(ctx context.Context, metadata *metadatamodel.AssetMetadata, req *assetmodel.ManageOwnerRequest) error {
-	currentOwners := metadata.Owners
-	for i, owner := range currentOwners {
-		if owner.OwnerID == req.OwnerID && owner.OwnerType == req.OwnerType {
-			// Remove owner from slice
-			metadata.Owners = append(currentOwners[:i], currentOwners[i+1:]...)
-			break
-		}
-	}
-	if err := s.metadataRepo.Update(ctx, metadata.Key, metadata); err != nil {
-		s.logger.Error("failed to remove owner from asset metadata",
-			zap.Error(err), zap.String("owner_id", req.OwnerID), zap.String("owner_type", req.OwnerType),
-		)
-		return fmt.Errorf("failed to remove owner from asset metadata: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) deleteMetadata(ctx context.Context, assetID uuid.UUID) error {
-	if err := s.metadataRepo.Delete(ctx, assetID.String()); err != nil {
-		s.logger.Error("failed to delete asset metadata", zap.Error(err), zap.String("asset_id", assetID.String()))
-		return fmt.Errorf("failed to delete asset metadata: %w", err)
 	}
 	return nil
 }
@@ -253,4 +193,16 @@ func (s *Service) listByPublicIDs(ctx context.Context, txRepo *assetrepo.Reposit
 		return nil, fmt.Errorf("failed to list assets by Cloudinary Public IDs: %w", err)
 	}
 	return assets, nil
+}
+
+func (s *Service) markAsBrokenAndClearOwners(ctx context.Context, assetID *uuid.UUID, metadata *metadatamodel.AssetMetadata, req *assetmodel.ChangeStateRequest) error {
+	adminID, err := parsing.StrToUUID(req.AdminID)
+	if err != nil {
+		return err
+	}
+	if err := s.grpcMarkAsBroken(ctx, assetID, &adminID, req); err != nil {
+		return err
+	}
+	metadata.Owners = []*metadatamodel.Owner{}
+	return s.metadataRepo.Update(ctx, metadata.Key, metadata)
 }

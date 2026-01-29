@@ -33,10 +33,8 @@ import (
 	serviceerrors "github.com/mikhail5545/media-service-go/internal/errors"
 	assetmodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/asset"
 	metadatamodel "github.com/mikhail5545/media-service-go/internal/models/cloudinary/metadata"
-	bytesutil "github.com/mikhail5545/media-service-go/internal/util/bytes"
 	"github.com/mikhail5545/media-service-go/internal/util/parsing"
 	"github.com/mikhail5545/product-service-client/client"
-	imagepbv1 "github.com/mikhail5545/product-service-client/pb/proto/product_service/image/v1"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -231,7 +229,8 @@ func (s *Service) Archive(ctx context.Context, req *assetmodel.ChangeStateReques
 		return serviceerrors.NewValidationFailedError(err)
 	}
 
-	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+	var toDelete *uuid.UUID
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.repo.WithTx(tx)
 
 		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
@@ -247,12 +246,20 @@ func (s *Service) Archive(ctx context.Context, req *assetmodel.ChangeStateReques
 			return err
 		}
 
-		if len(metadata.Owners) == 0 {
-			return nil
+		if len(metadata.Owners) > 0 {
+			return serviceerrors.NewConflictError("cannot archive asset with owners")
 		}
-
-		return s.grpcRemoveAssociations(ctx, asset, metadata)
+		toDelete = &asset.ID
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// If transaction commits successfully, delete gRPC relations outside transaction
+	if toDelete != nil {
+		return s.grpcDelete(ctx, toDelete)
+	}
+	return nil
 }
 
 // MarkAsBroken marks an asset as broken.
@@ -263,8 +270,10 @@ func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateR
 	if err := req.Validate(); err != nil {
 		return serviceerrors.NewValidationFailedError(err)
 	}
+	var toDelete *uuid.UUID
+	var metadataToDelete *metadatamodel.AssetMetadata
 
-	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.repo.WithTx(tx)
 
 		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status"})
@@ -280,22 +289,21 @@ func (s *Service) MarkAsBroken(ctx context.Context, req *assetmodel.ChangeStateR
 			return err
 		}
 
-		assetIDBytes, err := bytesutil.UUIDToBytes(&asset.ID)
-		if err != nil {
-			return err
+		if len(metadata.Owners) > 0 {
+			metadataToDelete = metadata
+			toDelete = &asset.ID
 		}
-		if len(metadata.Owners) == 0 {
-			return nil
-		}
-		if _, err := s.imageServiceClient.BrokenImage(ctx, &imagepbv1.BrokenImageRequest{
-			MediaServiceUuid: assetIDBytes,
-		}); err != nil {
-			s.logger.Error("failed to mark image as broken in image service", zap.Error(err), zap.String("asset_id", asset.ID.String()))
-			return fmt.Errorf("failed to mark image as broken in image service: %w", err)
-		}
-		metadata.Owners = []metadatamodel.Owner{}
-		return s.metadataRepo.Update(ctx, metadata.Key, metadata)
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// If transaction commits successfully, delete gRPC relations outside transaction
+	if toDelete != nil {
+		return s.markAsBrokenAndClearOwners(ctx, toDelete, metadataToDelete, req)
+	}
+	return nil
 }
 
 // AddOwner associates an external owner with an asset.
@@ -395,8 +403,8 @@ func (s *Service) Delete(ctx context.Context, req *assetmodel.ChangeStateRequest
 	if err := req.Validate(); err != nil {
 		return serviceerrors.NewValidationFailedError(err)
 	}
-
-	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+	var toDelete *uuid.UUID
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		txRepo := s.repo.WithTx(tx)
 
 		asset, err := s.getInTx(ctx, txRepo, req.ID, []string{"id", "status", "cloudinary_public_id", "recourse_type"})
@@ -405,11 +413,6 @@ func (s *Service) Delete(ctx context.Context, req *assetmodel.ChangeStateRequest
 		}
 		if asset.Status != assetmodel.StatusArchived {
 			return serviceerrors.NewConflictError("only archived assets can be deleted")
-		}
-
-		// Clear asset metadata from MongoDB
-		if err := s.deleteMetadata(ctx, asset.ID); err != nil {
-			return err
 		}
 
 		if asset.CloudinaryPublicID != "" {
@@ -425,7 +428,14 @@ func (s *Service) Delete(ctx context.Context, req *assetmodel.ChangeStateRequest
 			s.logger.Error("failed to delete asset record from Postgres", zap.Error(err), zap.String("asset_id", asset.ID.String()))
 			return fmt.Errorf("failed to delete asset record from Postgres: %w", err)
 		}
-
+		toDelete = &asset.ID
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	if toDelete != nil {
+		return s.deleteAssetMetadata(ctx, *toDelete)
+	}
+	return nil
 }

@@ -84,6 +84,8 @@ github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWE
 github.com/mattn/go-isatty v0.0.20/go.mod h1:W+V8PltTTMOvKvAeJH7IuucS94S2C6jfK/D7dTCTo3Y=
 github.com/mikhail5545/product-service-client v0.0.4 h1:AXanNyOLH4LwJ8qQb9SX2Hfp2a/xRjtexwFi/qEZVvc=
 github.com/mikhail5545/product-service-client v0.0.4/go.mod h1:imOTMt/++UXIVeV5ct5aFT+RjaIhuwKS2t7YJmF9dBg=
+github.com/mikhail5545/product-service-client v0.0.5 h1:LTc2geBRYhvXmUTVZQTfekni1pkpBtnVGFj/tkAaS40=
+github.com/mikhail5545/product-service-client v0.0.5/go.mod h1:imOTMt/++UXIVeV5ct5aFT+RjaIhuwKS2t7YJmF9dBg=
 github.com/mikhail5545/product-service-go v0.0.3-alpha.0.20251115202935-a2b177e6c428 h1:wHmFyWixIGZTmzss1XwaFqKAHYCJWU1OHZqEX24eXsY=
 github.com/mikhail5545/product-service-go v0.0.3-alpha.0.20251115202935-a2b177e6c428/go.mod h1:1udPJQ9tiA+ymbA6EG9jTZ4YNrD05iZYxs5hevbOpGU=
 github.com/mikhail5545/proto-go v0.1.31 h1:7V8pgDgvpJvDx9WbbsTOhatD8QNK5byX93dRALb/8gQ=

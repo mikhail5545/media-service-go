@@ -216,30 +216,3 @@ func (s *Service) archiveOnDeleteWebhook(ctx context.Context, txRepo *assetrepo.
 	}
 	return affected, assets, nil
 }
-
-func (s *Service) deleteMetadataOnDeleteWebhook(ctx context.Context, assets []*assetmodel.Asset) (int64, error) {
-	if len(assets) == 0 {
-		return 0, nil
-	}
-	assetIDs := make([]string, len(assets))
-	for i := range assets {
-		assetIDs[i] = assets[i].ID.String()
-	}
-	metadata, err := s.metadataRepo.ListByKeys(ctx, assetIDs)
-	if err != nil {
-		return 0, err
-	}
-	haveAssociations := make(uuid.UUIDs, 0, len(metadata))
-	for i := range metadata {
-		if len(metadata[i].Owners) > 0 {
-			haveAssociations = append(haveAssociations, uuid.MustParse(metadata[i].Key))
-		}
-	}
-	// TODO: implement batch deletion of associations from other services
-	// After removing associations, delete unowned metadata
-	deleted, err := s.metadataRepo.DeleteByKeys(ctx, assetIDs)
-	if err != nil {
-		return 0, err
-	}
-	return deleted, nil
-}
